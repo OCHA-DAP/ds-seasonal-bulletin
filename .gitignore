@@ -1,0 +1,4 @@
+*.html
+plots/*
+text/*
+.DS_Store

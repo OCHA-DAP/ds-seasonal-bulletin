@@ -1,0 +1,244 @@
+```{r setup, include = FALSE, message = FALSE, warning = FALSE}
+
+library(kableExtra)
+library(knitr)
+library(gghdx)
+library(cumulus)
+library(AzureStor)
+library(stringr)
+source("R/load_data.R")
+source("R/process_data.R")
+source("R/plot_data.R")
+knitr::opts_chunk$set(echo = TRUE) # do not print code by default
+knitr::opts_chunk$set(include = FALSE) # do not print output by default
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+# Update env var names to match what's needed for cumulus
+Sys.setenv(AZURE_STORAGE_SAS_TOKEN = Sys.getenv("DSCI_AZ_SAS_PROD"))
+Sys.setenv(AZURE_STORAGE_ACCOUNT = "imb0chd0prod")
+
+gghdx()
+```
+
+``` {r global_constants, echo = FALSE}
+
+# CHANGE BELOW PER ANALYSIS
+
+ISO3 <- "ETH" # Only "ETH" or "SOM" supported
+ADM_LEVEL <- 2 # And neither is this one...
+DATASET <- "era5" # "era5" or "seas5" data supported
+SEASON <- "OND" # "OND" or "MAM" seasons supported
+
+SEVERITY <- "tercile" # quartile or tercile
+YEAR <- 2024
+
+SAVE_PLOTS <- TRUE
+
+# Select the month we want to get the forecasts issued from
+# only relevant if using SEAS5 data
+issued_month <- 1
+```
+
+---
+title: '`r ISO3`: `r SEASON` Season Outlook <img src="https://drive.google.com/uc?id=1fHQUzF3ZjaoHj9KQ33-94dK_X1hcmjzW" style="height:50px;float:right;" />' 
+output:
+  html_document:
+    css: style.css
+    includes:
+      in_header: header.html
+    df_print: paged
+---
+
+``` {r constants, echo = FALSE}
+
+if (SEASON == "MAM") {
+  months_to_include <- c(3, 4, 5)
+} else if (SEASON == "OND") {
+  months_to_include <- c(10, 11, 12)
+}
+
+# Only relevant for SEAS5 data
+lead_times <- (months_to_include + 12 * (months_to_include < issued_month)) - issued_month
+
+# For Ethiopia, we're looking at PiN data
+if (ISO3 == "ETH") {
+  gdf_pop <- get_eth_gdf_pin(YEAR) # This contains all adms in ETH
+  if (ADM_LEVEL == 2) {
+    sel_zones <- subset_adm2_ond_mam()
+  } else {
+    sel_zones <- NULL
+  }
+  pcode_col <- glue("admin{ADM_LEVEL}Pcode")
+  pop_var <- "PiN"
+
+# While for Somalia we're looking at population
+} else if (ISO3 == "SOM") {
+  gdf_pop <- get_som_gdf_pop(ADM_LEVEL)
+  sel_zones <- NULL
+  pcode_col <- glue("ADM{ADM_LEVEL}_PCODE")
+  pop_var <- "Population"
+}
+
+```
+
+First load in the historical rainfall data from the Postgres database. We'll process that data to filter to only the months of interest (depending on the season we're looking at), 
+and calculate the total precipitation for that season, per pcode and year. We'll then calculate return periods and label tercile/quartiles for each pcode and year. 
+
+```{r loading}
+
+df_rainfall <- get_historical_rainfall(DATASET, ISO3, ADM_LEVEL, sel_zones)
+
+if (DATASET == "seas5") {
+  df_rainfall <- process_seas5_rainfall(
+    df_rainfall,
+    sel_month = issued_month,
+    months_to_include = months_to_include
+  )
+} else if (DATASET == "era5") {
+  df_rainfall <- process_era5_rainfall(
+    df_rainfall,
+    months_to_include = months_to_include
+  )
+}
+
+df_summary <- join_pop_rainfall(gdf_pop, df_rainfall, pcode_col)
+```
+
+``` {r load_cog_stack}
+
+containers <- cumulus::blob_containers(stage="prod")
+dir_name <- paste0(DATASET, "/monthly/processed")
+
+cog_df <- AzureStor::list_blobs(
+  container = containers$raster,
+  dir = dir_name
+)
+
+# process cog_df slightly differently for seas5 or era5
+if (DATASET == "seas5") {
+  cog_df <- cog_df %>%
+    mutate(
+      year = str_extract(name, "i(\\d{4})") %>% str_remove("i") %>% as.integer(), 
+      month = str_extract(name, "-(\\d{2})-") %>% str_remove_all("-") %>% as.integer(),
+      lt = str_extract(name, "lt\\d+") %>% str_remove("lt") %>% as.integer()
+    ) %>%
+    filter(
+      month == issued_month,
+      lt %in% lead_times
+    )
+  
+} else if (DATASET == "era5") {
+  cog_df <- cog_df %>%
+    mutate(
+      year = str_extract(name, "v(\\d{4})") %>% str_remove("v") %>% as.integer(),
+      month = str_extract(name, "-(\\d{2})-") %>% str_remove_all("-") %>% as.integer()
+    ) %>%
+    filter(month %in% months_to_include)
+}
+
+# Load by year, take the sum, then stack
+yearly_sums <- list()
+for (sel_year in unique(cog_df$year)) {
+  yearly_cogs <- filter(cog_df, year == sel_year)
+  urls <- paste0("/vsiaz/raster/", yearly_cogs$name)
+  cogs <- rast(urls)
+  cogs_clipped <- crop(cogs, gdf_pop)
+  cogs_masked <- mask(cogs_clipped, gdf_pop)
+  # go from mm/day to mm/month
+  yearly_sum <- sum((cogs_masked * 30))
+  if (sel_year == max(cog_df$year)) {
+    current_yearly_sum <- yearly_sum
+  }
+  yearly_sums <- append(yearly_sums, yearly_sum)
+}
+
+season_avg <- mean(yearly_sums)
+
+```
+
+``` {r plot_anomalies, include = TRUE, fig.width=10, fig.height=5}
+
+# If applicable, subset the gdf by only the selected zones
+if (!is.null(sel_zones)) {
+  gdf_sel <- gdf_pop %>% filter(!!sym(pcode_col) %in% sel_zones)
+} else {
+  gdf_sel <- gdf_pop
+}
+
+plot_anomalies(season_avg, current_yearly_sum, gdf_sel)
+```
+
+
+``` {r summarize}
+
+# TODO: Also the `total_unique_pcodes` value here doesn't seem correct...
+df_annual_pop <- calc_yearly_impact(df_summary, SEVERITY) %>%
+  mutate(
+    rank = rank(-total_affected, ties.method = "average"),
+    exceedance_prob = rank / (n() + 1),
+    return_period = 1 / exceedance_prob
+  )
+
+df_sel <- df_annual_pop %>%
+  filter(year == YEAR)
+
+total_affected <- df_sel$total_affected
+total_rp <- df_sel$return_period
+
+```
+
+`r format(round(total_affected), big.mark=",")` people in need are forecasted to experience lower `r SEVERITY` rainfall throughout the upcoming season.
+
+We see this level of people in need once every `r round(total_rp, 1)` years.
+
+
+``` {r rp_plot, include = TRUE, fig.height=5}
+
+affected_zones <- str_split(df_sel$affected_zones, ", ")[[1]]
+df_summary_year <- df_summary %>% filter(year == YEAR)
+
+# Join again with all adms
+gdf_rp <- gdf_pop %>%
+  left_join(df_summary_year, by = setNames("pcode", pcode_col))
+
+# Get all pcodes in the lower quantile
+gdf_lower_quantile <- gdf_pop %>%
+  filter(!!sym(pcode_col) %in% affected_zones)
+
+plot_return_periods(gdf_rp, gdf_lower_quantile)
+```
+
+
+``` {r calc_yearly_avg}
+df_rainfall_annual <- df_summary %>%
+  group_by(year) %>%
+  summarise(total_rainfall = sum(total_rainfall, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(total_rainfall) %>%
+  mutate(year = as.numeric(year))
+
+df_pop_annual <- df_summary %>%
+  group_by(year) %>%
+  summarise(total_pop = sum(!!sym(glue("TotalPop_{SEVERITY}")), na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(total_pop) %>%
+  mutate(year = as.numeric(year))
+```
+
+
+``` {r, include = TRUE, fig.width=10, fig.height=5}
+
+# These years will be highlighted on the chart
+REFERENCE_YEARS <- c(2023, 2020, 2014, 2024)
+
+df_annual_summary <- df_pop_annual %>%
+  full_join(df_rainfall_annual, by = "year") %>%
+  mutate(point_color = case_when(
+    year==YEAR~hdx_hex("tomato-hdx"),
+    year %in% REFERENCE_YEARS ~ hdx_hex("sapphire-light"),
+    TRUE ~ hdx_hex("sapphire-hdx"))) %>%
+  filter(year > 2000) # filtering to more recent years -- greater than 2000
+
+plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, YEAR, pop_var)
+
+```
