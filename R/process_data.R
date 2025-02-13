@@ -12,8 +12,8 @@ process_era5_rainfall <- function(
 ) {
   df_precip_summary <- df_era5 %>% 
     mutate(year = year(valid_date), month = month(valid_date)) %>%
-    # Specifically for ERA5 as values are monthly estimates for total daily precip
-    mutate(mean = mean * 30) %>%
+    # Transform mm/day to mm/month
+    mutate( mean = mean * lubridate::days_in_month(valid_date)) %>%
     filter(month %in% months_to_include) %>%
     group_by(pcode, year) %>% 
     summarise(total_rainfall = sum(mean, na.rm=TRUE)) %>%
@@ -57,7 +57,8 @@ process_seas5_rainfall <- function(
     ) %>%
     filter(valid_month %in% months_to_include) %>%
     filter(issued_month %in% sel_month) %>%
-    mutate(mean = mean * 30) %>%
+    # Transform mm/day to mm/month
+    mutate( mean = mean * lubridate::days_in_month(valid_date)) %>%
     group_by(pcode, year) %>% 
     summarise(total_rainfall = sum(mean, na.rm=TRUE)) %>%
     ungroup() %>%
