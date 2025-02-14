@@ -25,22 +25,22 @@ gghdx()
 # CHANGE BELOW PER ANALYSIS
 
 ISO3 <- "ETH" # Only "ETH" or "SOM" supported
-ADM_LEVEL <- 2 # And neither is this one...
-DATASET <- "era5" # "era5" or "seas5" data supported
-SEASON <- "OND" # "OND" or "MAM" seasons supported
+ADM_LEVEL <- 1 # 
+DATASET <- "seas5" # "era5" or "seas5" data supported
+SEASON <- "MAM" # "OND" or "MAM" seasons supported
 
 SEVERITY <- "tercile" # quartile or tercile
-YEAR <- 2024
+YEAR <- 2025
 
 SAVE_PLOTS <- TRUE
 
 # Select the month we want to get the forecasts issued from
 # only relevant if using SEAS5 data
-issued_month <- 1
+issued_month <- 2
 ```
 
 ---
-title: '`r ISO3`: `r SEASON` Season Outlook <img src="https://drive.google.com/uc?id=1fHQUzF3ZjaoHj9KQ33-94dK_X1hcmjzW" style="height:50px;float:right;" />' 
+title: '`r ISO3`: `r SEASON` `r YEAR` Season Outlook <img src="https://drive.google.com/uc?id=1fHQUzF3ZjaoHj9KQ33-94dK_X1hcmjzW" style="height:50px;float:right;" />' 
 output:
   html_document:
     css: style.css
@@ -56,9 +56,6 @@ if (SEASON == "MAM") {
 } else if (SEASON == "OND") {
   months_to_include <- c(10, 11, 12)
 }
-
-# Only relevant for SEAS5 data
-lead_times <- (months_to_include + 12 * (months_to_include < issued_month)) - issued_month
 
 # For Ethiopia, we're looking at PiN data
 if (ISO3 == "ETH") {
@@ -89,19 +86,19 @@ and calculate the total precipitation for that season, per pcode and year. We'll
 df_rainfall <- get_historical_rainfall(DATASET, ISO3, ADM_LEVEL, sel_zones)
 
 if (DATASET == "seas5") {
-  df_rainfall <- process_seas5_rainfall(
+  df_rainfall_proc <- process_seas5_rainfall(
     df_rainfall,
     sel_month = issued_month,
     months_to_include = months_to_include
   )
 } else if (DATASET == "era5") {
-  df_rainfall <- process_era5_rainfall(
+  df_rainfall_proc <- process_era5_rainfall(
     df_rainfall,
     months_to_include = months_to_include
   )
 }
 
-df_summary <- join_pop_rainfall(gdf_pop, df_rainfall, pcode_col)
+df_summary <- join_pop_rainfall(gdf_pop, df_rainfall_proc, pcode_col)
 ```
 
 ``` {r load_cog_stack}
@@ -116,6 +113,11 @@ cog_df <- AzureStor::list_blobs(
 
 # process cog_df slightly differently for seas5 or era5
 if (DATASET == "seas5") {
+  
+  # Given the `issued_month` and the valid months we want to include, 
+  # work backwards to calculate the leadtimes 
+  lead_times <- (months_to_include + 12 * (months_to_include < issued_month)) - issued_month
+  
   cog_df <- cog_df %>%
     mutate(
       year = str_extract(name, "i(\\d{4})") %>% str_remove("i") %>% as.integer(), 
@@ -229,7 +231,7 @@ df_pop_annual <- df_summary %>%
 ``` {r, include = TRUE, fig.width=10, fig.height=5}
 
 # These years will be highlighted on the chart
-REFERENCE_YEARS <- c(2023, 2020, 2014, 2024)
+REFERENCE_YEARS <- c(2023, 2022, 2020, 2014, 2024)
 
 df_annual_summary <- df_pop_annual %>%
   full_join(df_rainfall_annual, by = "year") %>%
