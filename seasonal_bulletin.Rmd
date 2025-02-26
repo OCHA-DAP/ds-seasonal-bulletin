@@ -9,13 +9,10 @@ library(stringr)
 source("R/load_data.R")
 source("R/process_data.R")
 source("R/plot_data.R")
+source("R/cogs.R")
 knitr::opts_chunk$set(echo = TRUE) # do not print code by default
 knitr::opts_chunk$set(include = FALSE) # do not print output by default
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
-
-# Update env var names to match what's needed for cumulus
-Sys.setenv(AZURE_STORAGE_SAS_TOKEN = Sys.getenv("DSCI_AZ_SAS_PROD"))
-Sys.setenv(AZURE_STORAGE_ACCOUNT = "imb0chd0prod")
 
 gghdx()
 ```
@@ -24,7 +21,7 @@ gghdx()
 
 # CHANGE BELOW PER ANALYSIS
 
-ISO3 <- "ETH" # Only "ETH" or "SOM" supported
+ISO3 <- "SOM" # Only "ETH" or "SOM" supported
 ADM_LEVEL <- 1 # 
 DATASET <- "seas5" # "era5" or "seas5" data supported
 SEASON <- "MAM" # "OND" or "MAM" seasons supported
@@ -103,58 +100,75 @@ df_summary <- join_pop_rainfall(gdf_pop, df_rainfall_proc, pcode_col)
 
 ``` {r load_cog_stack}
 
-containers <- cumulus::blob_containers(stage="prod")
-dir_name <- paste0(DATASET, "/monthly/processed")
+proj_container <- cumulus::blob_containers("dev")$projects
+rast_container <- cumulus::blob_containers("prod")$raster
+tmp_dir <- "tmp/"
+azure_dir <- "ds-seasonal-bulletin/"
+src_cog_dir <- paste0(DATASET, "/monthly/processed")
 
-cog_df <- AzureStor::list_blobs(
-  container = containers$raster,
-  dir = dir_name
-)
+# First check if the COGs (average and current) exist already
+f_avg <- cog_filename(ISO3, "avg", DATASET, SEASON, issued_month)
+azure_filepath_avg <- paste0(azure_dir, ISO3, "/", f_avg)
+local_filepath_avg <- paste0(tmp_dir, f_avg)
+exists_avg <- cog_exists(proj_container, azure_filepath_avg)
 
-# process cog_df slightly differently for seas5 or era5
-if (DATASET == "seas5") {
-  
-  # Given the `issued_month` and the valid months we want to include, 
-  # work backwards to calculate the leadtimes 
-  lead_times <- (months_to_include + 12 * (months_to_include < issued_month)) - issued_month
-  
-  cog_df <- cog_df %>%
-    mutate(
-      year = str_extract(name, "i(\\d{4})") %>% str_remove("i") %>% as.integer(), 
-      month = str_extract(name, "-(\\d{2})-") %>% str_remove_all("-") %>% as.integer(),
-      lt = str_extract(name, "lt\\d+") %>% str_remove("lt") %>% as.integer()
-    ) %>%
-    filter(
-      month == issued_month,
-      lt %in% lead_times
-    )
-  
-} else if (DATASET == "era5") {
-  cog_df <- cog_df %>%
-    mutate(
-      year = str_extract(name, "v(\\d{4})") %>% str_remove("v") %>% as.integer(),
-      month = str_extract(name, "-(\\d{2})-") %>% str_remove_all("-") %>% as.integer()
-    ) %>%
-    filter(month %in% months_to_include)
-}
+f_cur <- cog_filename(ISO3, "cur", DATASET, SEASON, issued_month)
+azure_filepath_cur <- paste0(azure_dir, ISO3, "/", f_cur)
+local_filepath_cur <- paste0(tmp_dir, f_cur)
+exists_cur <- cog_exists(proj_container, azure_filepath_cur)
 
-# Load by year, take the sum, then stack
-yearly_sums <- list()
-for (sel_year in unique(cog_df$year)) {
-  yearly_cogs <- filter(cog_df, year == sel_year)
-  urls <- paste0("/vsiaz/raster/", yearly_cogs$name)
-  cogs <- rast(urls)
-  cogs_clipped <- crop(cogs, gdf_pop)
-  cogs_masked <- mask(cogs_clipped, gdf_pop)
-  # go from mm/day to mm/month
-  yearly_sum <- sum((cogs_masked * 30))
-  if (sel_year == max(cog_df$year)) {
-    current_yearly_sum <- yearly_sum
+if (exists_avg && exists_cur) {
+  r_avg <- load_cog_from_azure(
+    proj_container,
+    azure_filepath_avg,
+    local_filepath_avg
+  )
+  r_cur <- load_cog_from_azure(
+    proj_container,
+    azure_filepath_cur,
+    local_filepath_cur
+  )
+} else {
+  cog_df <- get_cogs_to_process(
+    rast_container,
+    DATASET,
+    months_to_include,
+    issued_month
+  )
+
+  # TODO: Improve this processing -- see Zack suggestions
+  # Load by year, take the sum, then stack
+  yearly_sums <- list()
+  for (sel_year in unique(cog_df$year)) {
+    yearly_cogs <- filter(cog_df, year == sel_year)
+    urls <- paste0("/vsiaz/raster/", yearly_cogs$name)
+    cogs <- rast(urls)
+    cogs_clipped <- crop(cogs, gdf_pop)
+    cogs_masked <- mask(cogs_clipped, gdf_pop)
+    # go from mm/day to mm/month
+    yearly_sum <- sum((cogs_masked * 30))
+    if (sel_year == max(cog_df$year)) {
+      r_cur <- yearly_sum
+    }
+    yearly_sums <- append(yearly_sums, yearly_sum)
   }
-  yearly_sums <- append(yearly_sums, yearly_sum)
-}
 
-season_avg <- mean(yearly_sums)
+  r_avg <- mean(yearly_sums)
+
+  # Now save to Azure
+  upload_cog_to_azure(
+    r_cur,
+    proj_container,
+    local_filepath_cur,
+    azure_filepath_cur
+  )
+  upload_cog_to_azure(
+    r_avg,
+    proj_container,
+    local_filepath_avg,
+    azure_filepath_avg
+  )
+}
 
 ```
 
@@ -167,7 +181,7 @@ if (!is.null(sel_zones)) {
   gdf_sel <- gdf_pop
 }
 
-plot_anomalies(season_avg, current_yearly_sum, gdf_sel)
+plot_anomalies(r_avg, r_cur, gdf_sel)
 ```
 
 
