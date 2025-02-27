@@ -66,9 +66,7 @@ process_seas5_rainfall <- function(
     group_by(pcode) %>%
     mutate(
       tercile = ntile(total_rainfall, 3),
-      quartile = ntile(total_rainfall, 4),
       is_lower_tercile = tercile == 1,
-      is_lower_quartile = quartile == 1
     ) %>%
     mutate(
       rank = rank(total_rainfall, ties.method = "average"),
@@ -85,15 +83,14 @@ process_seas5_rainfall <- function(
 join_pop_rainfall <- function(df_pop, df_rainfall, pcode_col) {
   df_summary <- df_rainfall %>%
     left_join(df_pop, by = setNames(pcode_col, "pcode")) %>%
-    mutate(TotalPop_tercile = if_else(is_lower_tercile == FALSE, 0, TotalPop)) %>%
-    mutate(TotalPop_quartile = if_else(is_lower_quartile == FALSE, 0, TotalPop))
+    mutate(TotalPop_tercile = if_else(is_lower_tercile == FALSE, 0, TotalPop))
   return(df_summary)
 }
 
-#' Based on an input dataframe and severity level, 
+#' Based on an input dataframe
 #' summarizes annual affected population
-calc_yearly_impact <- function(df, severity) {
-  col <- paste0("TotalPop_", severity)
+calc_yearly_impact <- function(df) {
+  col <- "TotalPop_tercile"
   df_ <- df %>% 
     group_by(year) %>% 
     summarise(

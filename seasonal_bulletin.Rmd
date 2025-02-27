@@ -1,3 +1,18 @@
+---
+output:
+  html_document
+params:
+  iso3: SOM
+  adm_level: 1
+  dataset: seas5
+  season: MAM
+  issued_month: 2
+  year: 2025
+---
+
+# `r paste(params$iso3, ":", params$season, params$year, "Season Outlook")`
+#### Generated `r Sys.Date()` from `r params$dataset` data issued `r paste(month.abb[params$issued_month], params$year)`
+
 ```{r setup, include = FALSE, message = FALSE, warning = FALSE}
 
 library(kableExtra)
@@ -17,59 +32,30 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 gghdx()
 ```
 
-``` {r global_constants, echo = FALSE}
-
-# CHANGE BELOW PER ANALYSIS
-
-ISO3 <- "SOM" # Only "ETH" or "SOM" supported
-ADM_LEVEL <- 1 # 
-DATASET <- "seas5" # "era5" or "seas5" data supported
-SEASON <- "MAM" # "OND" or "MAM" seasons supported
-
-SEVERITY <- "tercile" # quartile or tercile
-YEAR <- 2025
-
-SAVE_PLOTS <- TRUE
-
-# Select the month we want to get the forecasts issued from
-# only relevant if using SEAS5 data
-issued_month <- 2
-```
-
----
-title: '`r ISO3`: `r SEASON` `r YEAR` Season Outlook <img src="https://drive.google.com/uc?id=1fHQUzF3ZjaoHj9KQ33-94dK_X1hcmjzW" style="height:50px;float:right;" />' 
-output:
-  html_document:
-    css: style.css
-    includes:
-      in_header: header.html
-    df_print: paged
----
-
 ``` {r constants, echo = FALSE}
 
-if (SEASON == "MAM") {
+if (params$season == "MAM") {
   months_to_include <- c(3, 4, 5)
-} else if (SEASON == "OND") {
+} else if (params$season == "OND") {
   months_to_include <- c(10, 11, 12)
 }
 
 # For Ethiopia, we're looking at PiN data
-if (ISO3 == "ETH") {
-  gdf_pop <- get_eth_gdf_pin(YEAR) # This contains all adms in ETH
-  if (ADM_LEVEL == 2) {
+if (params$iso3 == "ETH") {
+  gdf_pop <- get_eth_gdf_pin(params$year) # This contains all adms in ETH
+  if (params$adm_level == 2) {
     sel_zones <- subset_adm2_ond_mam()
   } else {
     sel_zones <- NULL
   }
-  pcode_col <- glue("admin{ADM_LEVEL}Pcode")
+  pcode_col <- glue("admin{params$adm_level}Pcode")
   pop_var <- "PiN"
 
 # While for Somalia we're looking at population
-} else if (ISO3 == "SOM") {
-  gdf_pop <- get_som_gdf_pop(ADM_LEVEL)
+} else if (params$iso3 == "SOM") {
+  gdf_pop <- get_som_gdf_pop(params$adm_level)
   sel_zones <- NULL
-  pcode_col <- glue("ADM{ADM_LEVEL}_PCODE")
+  pcode_col <- glue("ADM{params$adm_level}_PCODE")
   pop_var <- "Population"
 }
 
@@ -80,15 +66,15 @@ and calculate the total precipitation for that season, per pcode and year. We'll
 
 ```{r loading}
 
-df_rainfall <- get_historical_rainfall(DATASET, ISO3, ADM_LEVEL, sel_zones)
+df_rainfall <- get_historical_rainfall(params$dataset, params$iso3, params$adm_level, sel_zones)
 
-if (DATASET == "seas5") {
+if (params$dataset == "seas5") {
   df_rainfall_proc <- process_seas5_rainfall(
     df_rainfall,
-    sel_month = issued_month,
+    sel_month = params$issued_month,
     months_to_include = months_to_include
   )
-} else if (DATASET == "era5") {
+} else if (params$dataset == "era5") {
   df_rainfall_proc <- process_era5_rainfall(
     df_rainfall,
     months_to_include = months_to_include
@@ -104,16 +90,16 @@ proj_container <- cumulus::blob_containers("dev")$projects
 rast_container <- cumulus::blob_containers("prod")$raster
 tmp_dir <- "tmp/"
 azure_dir <- "ds-seasonal-bulletin/"
-src_cog_dir <- paste0(DATASET, "/monthly/processed")
+src_cog_dir <- paste0(params$dataset, "/monthly/processed")
 
 # First check if the COGs (average and current) exist already
-f_avg <- cog_filename(ISO3, "avg", DATASET, SEASON, issued_month)
-azure_filepath_avg <- paste0(azure_dir, ISO3, "/", f_avg)
+f_avg <- cog_filename(params$iso3, "avg", params$dataset, params$season, params$issued_month)
+azure_filepath_avg <- paste0(azure_dir, params$iso3, "/", f_avg)
 local_filepath_avg <- paste0(tmp_dir, f_avg)
 exists_avg <- cog_exists(proj_container, azure_filepath_avg)
 
-f_cur <- cog_filename(ISO3, "cur", DATASET, SEASON, issued_month)
-azure_filepath_cur <- paste0(azure_dir, ISO3, "/", f_cur)
+f_cur <- cog_filename(params$iso3, "cur", params$dataset, params$season, params$issued_month)
+azure_filepath_cur <- paste0(azure_dir, params$iso3, "/", f_cur)
 local_filepath_cur <- paste0(tmp_dir, f_cur)
 exists_cur <- cog_exists(proj_container, azure_filepath_cur)
 
@@ -131,9 +117,9 @@ if (exists_avg && exists_cur) {
 } else {
   cog_df <- get_cogs_to_process(
     rast_container,
-    DATASET,
+    params$dataset,
     months_to_include,
-    issued_month
+    params$issued_month
   )
 
   # TODO: Improve this processing -- see Zack suggestions
@@ -188,7 +174,7 @@ plot_anomalies(r_avg, r_cur, gdf_sel)
 ``` {r summarize}
 
 # TODO: Also the `total_unique_pcodes` value here doesn't seem correct...
-df_annual_pop <- calc_yearly_impact(df_summary, SEVERITY) %>%
+df_annual_pop <- calc_yearly_impact(df_summary) %>%
   mutate(
     rank = rank(-total_affected, ties.method = "average"),
     exceedance_prob = rank / (n() + 1),
@@ -196,14 +182,14 @@ df_annual_pop <- calc_yearly_impact(df_summary, SEVERITY) %>%
   )
 
 df_sel <- df_annual_pop %>%
-  filter(year == YEAR)
+  filter(year == params$year)
 
 total_affected <- df_sel$total_affected
 total_rp <- df_sel$return_period
 
 ```
 
-`r format(round(total_affected), big.mark=",")` people in need are forecasted to experience lower `r SEVERITY` rainfall throughout the upcoming season.
+`r format(round(total_affected), big.mark=",")` people in need are forecasted to experience lower tercile rainfall throughout the upcoming season.
 
 We see this level of people in need once every `r round(total_rp, 1)` years.
 
@@ -211,7 +197,7 @@ We see this level of people in need once every `r round(total_rp, 1)` years.
 ``` {r rp_plot, include = TRUE, fig.height=5}
 
 affected_zones <- str_split(df_sel$affected_zones, ", ")[[1]]
-df_summary_year <- df_summary %>% filter(year == YEAR)
+df_summary_year <- df_summary %>% filter(year == params$year)
 
 # Join again with all adms
 gdf_rp <- gdf_pop %>%
@@ -235,7 +221,7 @@ df_rainfall_annual <- df_summary %>%
 
 df_pop_annual <- df_summary %>%
   group_by(year) %>%
-  summarise(total_pop = sum(!!sym(glue("TotalPop_{SEVERITY}")), na.rm = TRUE)) %>%
+  summarise(total_pop = sum(TotalPop_tercile, na.rm = TRUE)) %>%
   ungroup() %>%
   arrange(total_pop) %>%
   mutate(year = as.numeric(year))
@@ -250,11 +236,11 @@ REFERENCE_YEARS <- c(2023, 2022, 2020, 2014, 2024)
 df_annual_summary <- df_pop_annual %>%
   full_join(df_rainfall_annual, by = "year") %>%
   mutate(point_color = case_when(
-    year==YEAR~hdx_hex("tomato-hdx"),
+    year==params$year~hdx_hex("tomato-hdx"),
     year %in% REFERENCE_YEARS ~ hdx_hex("sapphire-light"),
     TRUE ~ hdx_hex("sapphire-hdx"))) %>%
   filter(year > 2000) # filtering to more recent years -- greater than 2000
 
-plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, YEAR, pop_var)
+plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, params$year, pop_var)
 
 ```

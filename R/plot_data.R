@@ -77,18 +77,18 @@ plot_anomalies <- function(season_avg, current_yearly_sum, gdf, save = FALSE) {
 }
 
 #' Creates a plot of return periods per pcode,
-#' with pcodes in the lower SEVERITY level highlighted
+#' with pcodes in the lower tercile level highlighted
 plot_return_periods <- function(gdf_rp, gdf_lower_quantile, save = FALSE) {
   plot_rp <- ggplot() +
     geom_sf(data = gdf_rp, aes(fill = return_period)) +
-    geom_sf(data = gdf_lower_quantile, aes(color = glue("Lower {SEVERITY} rainfall")), fill = NA,linewidth =1 ) +
+    geom_sf(data = gdf_lower_quantile, aes(color = glue("Lower tercile rainfall")), fill = NA,linewidth =1 ) +
     scale_color_manual(
       name = NULL,  # No title for boundary legend
       values = c("Lower tercile rainfall" = "tomato")  # Color for the boundary lines
     ) +
     scale_fill_gradient_hdx_tomato(na.value = "lightgrey", name="Return Period (years)")+
     labs(
-      title = glue("Rainfall Return Periods in {YEAR}"),
+      title = glue("Rainfall Return Periods"),
       caption = "Higher return periods indicate rarer low-rainfall events"
     )
 
@@ -130,7 +130,7 @@ plot_annual_scatter <- function(
     scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "M")) +
     scale_color_identity() +
     labs(
-      title = glue("Annual {SEASON} total rainfall vs est. {pop_var} impacted by drought"),
+      title = glue("Total seasonal rainfall vs est. {pop_var} impacted by drought"),
       x = "Total Rainfall (mm)",
       y = glue("Est. {pop_var} Impacted by Drought"),
       subtitle = glue("From 2000 to {highlight_year}")
