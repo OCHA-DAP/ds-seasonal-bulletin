@@ -2,8 +2,8 @@
 output:
   html_document
 params:
-  iso3: SOM
-  adm_level: 1
+  iso3: ETH
+  adm_level: 2
   dataset: seas5
   season: MAM
   issued_month: 2
@@ -21,15 +21,16 @@ library(gghdx)
 library(cumulus)
 library(AzureStor)
 library(stringr)
-source("R/load_data.R")
-source("R/process_data.R")
-source("R/plot_data.R")
-source("R/cogs.R")
+source("../R/load_data.R")
+source("../R/process_data.R")
+source("../R/plot_data.R")
+source("../R/cogs.R")
 knitr::opts_chunk$set(echo = TRUE) # do not print code by default
 knitr::opts_chunk$set(include = FALSE) # do not print output by default
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 
 gghdx()
+
 ```
 
 ``` {r constants, echo = FALSE}
