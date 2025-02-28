@@ -111,7 +111,7 @@ plot_annual_scatter <- function(
   df_annual_summary,
   reference_years,
   highlight_year,
-  pop_var,
+  pop_var = "Population",
   save = FALSE
 ) {
 

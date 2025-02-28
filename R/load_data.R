@@ -10,69 +10,30 @@ library(readxl)
 library(jsonlite)
 
 #' Get list of admin2 PCodes for March-April-May and Oct-Nov-Dec seasonal zones in Ethiopia
+#' Returns NULL for all other cases (so far we don't subset)
 #' @return Character vector of admin2 PCodes
-subset_adm2_ond_mam <- function() {
-  df_mam_ond <- read_csv(
-    file.path(
-      Sys.getenv("AA_DATA_DIR"),
-      "public", "exploration", "eth",
-      "mam_ond_zones_fewsnet.csv"
-    ),
-    show_col_types = FALSE
-  )
-  ond_zones <- c(
-    "ET0508", "ET0806", "ET0808", "ET0411", "ET0412", "ET0810", "ET0511",
-    "ET0807", "ET0507", "ET0421", "ET0410", "ET0504", "ET0502", "ET0802",
-    "ET0414", "ET0503", "ET0809", "ET0505", "ET0509", "ET0510", "ET0506",
-    "ET0812", "ET0415", "ET0422", "ET0408", "ET0417", "ET1600", "ET0811"
-  )
+subset_pcodes <- function(params) {
 
-  return(c(df_mam_ond$admin2Pcode, ond_zones))
-}
+  if (params$iso3 == "ETH" && params$adm_level == 2 && 
+      (params$season == "MAM" || params$season == "OND")) {
+    
 
-
-#' Load Ethiopian admin2 boundaries and 2024 Food Security PIN data,
-#' joining them into a single sf object
-#' @return sf object with admin2 geometries and Food Security PIN data
-get_eth_gdf_pin <- function(year) {
-  # Get the admin bounds
-  eth_adm2 <- st_read(
-    file.path(
-      Sys.getenv("AA_DATA_DIR"),
-      "public", "raw", "eth", "cod_ab", "Admin_2024.gdb.zip"
-    ),
-    layer = "eth_admbnda_adm2_csa_bofedb_2024"
-  ) %>%
-    filter(!(admin2Pcode %in% list("ET0000", "ET1000")))
-
-  if (year == 2025) {
-    fname <- "Food Security PIN and severity 2025.xlsx"
-    sheet_name <- "WS - 3.1 PIN"
-    cluster_pin_col <- "Food Security Cluster"
-  } else if (year == 2024) {
-    fname <- "Food Security_PIN_Severity_2024.xlsx"
-    sheet_name <- "Cluster PiN"
-    cluster_pin_col <- "Cluster PiN"
+    df_mam_ond <- cumulus::blob_read(
+      name = "ds-seasonal-bulletin/ETH/misc/mam_ond_zones_fewsnet.csv",
+      stage = "dev",
+      container = "projects"
+    )
+    ond_zones <- c(
+      "ET0508", "ET0806", "ET0808", "ET0411", "ET0412", "ET0810", "ET0511",
+      "ET0807", "ET0507", "ET0421", "ET0410", "ET0504", "ET0502", "ET0802",
+      "ET0414", "ET0503", "ET0809", "ET0505", "ET0509", "ET0510", "ET0506",
+      "ET0812", "ET0415", "ET0422", "ET0408", "ET0417", "ET1600", "ET0811"
+    )
+    return(c(df_mam_ond$admin2Pcode, ond_zones))
+  } else {
+    return(NULL)
   }
-
-  # Get the PiN data and join with the geodataframe
-  df_pin_fs <- read_excel(
-    path = file.path(Sys.getenv("AA_DATA_DIR"), "public", "exploration", "eth", "pin", fname),
-    skip = 1,
-    col_names = TRUE,
-    sheet = sheet_name
-  ) %>%
-    group_by(`Admin 2 P-Code`) %>%
-    summarise(total_pin = sum(!!sym(cluster_pin_col), na.rm = TRUE)) %>%
-    select("Admin 2 P-Code", "total_pin")
-
-  gdf_adm2 <- eth_adm2 %>%
-    full_join(df_pin_fs, by = c("admin2Pcode" = "Admin 2 P-Code")) %>%
-    rename(TotalPop = total_pin)
-
-  return(gdf_adm2)
 }
-
 
 #' Query historical rainfall data for specified administrative zones
 #' @param table Database table name
@@ -127,20 +88,18 @@ get_pop <- function(iso3, adm_level) {
 #' Load COD boundaries and population data for a given ISO3 and admin level,
 #' joining them into a single sf object
 #' @return sf object
-get_som_gdf_pop <- function(adm_level) {
-  gdf_som <- st_read(
-    file.path(
-      Sys.getenv("AA_DATA_DIR"),
-      "public", "raw", "som", "cod_ab", "som_adm.shp.zip"
-    ),
-    layer = glue("som_admbnda_adm{adm_level}_ocha_20230308")
-  )
+get_gdf_pop <- function(iso3, adm_level) {
+  # TODO: Should this really be returning a list?
+  gdf <- cumulus::download_fieldmaps_sf(
+    iso3,
+    glue("{iso3}_adm{adm_level}")
+  )[[1]]
 
   col1 <- glue("ADM{adm_level}_PCODE")
   col2 <- glue("admin{adm_level}_code")
-  df_pop <- get_pop("SOM", adm_level)
-
-  gdf_joined <- gdf_som %>%
+  
+  df_pop <- get_pop(iso3, adm_level)
+  gdf_joined <- gdf %>%
     full_join(df_pop, by = setNames(col2, col1))
 
   return(gdf_joined)

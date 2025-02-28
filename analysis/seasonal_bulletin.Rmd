@@ -41,24 +41,9 @@ if (params$season == "MAM") {
   months_to_include <- c(10, 11, 12)
 }
 
-# For Ethiopia, we're looking at PiN data
-if (params$iso3 == "ETH") {
-  gdf_pop <- get_eth_gdf_pin(params$year) # This contains all adms in ETH
-  if (params$adm_level == 2) {
-    sel_zones <- subset_adm2_ond_mam()
-  } else {
-    sel_zones <- NULL
-  }
-  pcode_col <- glue("admin{params$adm_level}Pcode")
-  pop_var <- "PiN"
-
-# While for Somalia we're looking at population
-} else if (params$iso3 == "SOM") {
-  gdf_pop <- get_som_gdf_pop(params$adm_level)
-  sel_zones <- NULL
-  pcode_col <- glue("ADM{params$adm_level}_PCODE")
-  pop_var <- "Population"
-}
+gdf_pop <- get_gdf_pop(params$iso3, params$adm_level)
+sel_zones <- subset_pcodes(params)
+pcode_col <- glue("ADM{params$adm_level}_PCODE")
 
 ```
 
@@ -242,6 +227,6 @@ df_annual_summary <- df_pop_annual %>%
     TRUE ~ hdx_hex("sapphire-hdx"))) %>%
   filter(year > 2000) # filtering to more recent years -- greater than 2000
 
-plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, params$year, pop_var)
+plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, params$year)
 
 ```
