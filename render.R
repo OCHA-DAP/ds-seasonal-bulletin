@@ -19,7 +19,7 @@ for (country_name in names(country_configs)) {
         adm_level = country$adm_level,
         dataset = "seas5",
         season = "MAM",
-        issued_month = 2,
+        issued_month = 3,
         year = 2025
     )
 

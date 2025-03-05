@@ -2,16 +2,16 @@
 output:
   html_document
 params:
-  iso3: ETH
-  adm_level: 2
+  iso3: SOM
+  adm_level: 1
   dataset: seas5
   season: MAM
-  issued_month: 2
+  issued_month: 3
   year: 2025
 ---
 
 # `r paste(params$iso3, ":", params$season, params$year, "Season Outlook")`
-#### Generated `r Sys.Date()` from `r params$dataset` data issued `r paste(month.abb[params$issued_month], params$year)`
+#### Generated `r Sys.Date()` from ECMWF `r toupper(params$dataset)` data issued `r paste(month.abb[params$issued_month], params$year)`
 
 ```{r setup, include = FALSE, message = FALSE, warning = FALSE}
 
@@ -33,7 +33,7 @@ gghdx()
 
 ```
 
-``` {r constants, echo = FALSE}
+``` {r constants}
 
 if (params$season == "MAM") {
   months_to_include <- c(3, 4, 5)
@@ -46,9 +46,6 @@ sel_zones <- subset_pcodes(params)
 pcode_col <- glue("ADM{params$adm_level}_PCODE")
 
 ```
-
-First load in the historical rainfall data from the Postgres database. We'll process that data to filter to only the months of interest (depending on the season we're looking at), 
-and calculate the total precipitation for that season, per pcode and year. We'll then calculate return periods and label tercile/quartiles for each pcode and year. 
 
 ```{r loading}
 
@@ -69,6 +66,28 @@ if (params$dataset == "seas5") {
 
 df_summary <- join_pop_rainfall(gdf_pop, df_rainfall_proc, pcode_col)
 ```
+
+``` {r summarize}
+
+df_annual_pop <- calc_yearly_impact(df_summary) %>%
+  mutate(
+    rank = rank(-total_affected, ties.method = "average"),
+    exceedance_prob = rank / (n() + 1),
+    return_period = 1 / exceedance_prob
+  )
+
+df_sel <- df_annual_pop %>%
+  filter(year == params$year)
+
+total_affected <- df_sel$total_affected
+total_rp <- df_sel$return_period
+
+```
+
+`r format(round(total_affected), big.mark=",")` people are forecasted to experience lower tercile rainfall throughout the upcoming season.
+
+We see this level of people in need once every `r round(total_rp, 1)` years.
+
 
 ``` {r load_cog_stack}
 
@@ -144,7 +163,7 @@ if (exists_avg && exists_cur) {
 
 ```
 
-``` {r plot_anomalies, include = TRUE, fig.width=10, fig.height=5}
+``` {r plot_anomalies, include = TRUE, echo = FALSE, fig.width=10, fig.height=5}
 
 # If applicable, subset the gdf by only the selected zones
 if (!is.null(sel_zones)) {
@@ -157,30 +176,8 @@ plot_anomalies(r_avg, r_cur, gdf_sel)
 ```
 
 
-``` {r summarize}
 
-# TODO: Also the `total_unique_pcodes` value here doesn't seem correct...
-df_annual_pop <- calc_yearly_impact(df_summary) %>%
-  mutate(
-    rank = rank(-total_affected, ties.method = "average"),
-    exceedance_prob = rank / (n() + 1),
-    return_period = 1 / exceedance_prob
-  )
-
-df_sel <- df_annual_pop %>%
-  filter(year == params$year)
-
-total_affected <- df_sel$total_affected
-total_rp <- df_sel$return_period
-
-```
-
-`r format(round(total_affected), big.mark=",")` people in need are forecasted to experience lower tercile rainfall throughout the upcoming season.
-
-We see this level of people in need once every `r round(total_rp, 1)` years.
-
-
-``` {r rp_plot, include = TRUE, fig.height=5}
+``` {r rp_plot, include = TRUE, echo = FALSE, fig.height=5}
 
 affected_zones <- str_split(df_sel$affected_zones, ", ")[[1]]
 df_summary_year <- df_summary %>% filter(year == params$year)
@@ -214,7 +211,7 @@ df_pop_annual <- df_summary %>%
 ```
 
 
-``` {r, include = TRUE, fig.width=10, fig.height=5}
+``` {r,include = TRUE, echo = FALSE, fig.width=10, fig.height=5}
 
 # These years will be highlighted on the chart
 REFERENCE_YEARS <- c(2023, 2022, 2020, 2014, 2024)
