@@ -65,8 +65,13 @@ process_seas5_rainfall <- function(
     mutate(year = as.numeric(year)) %>%
     group_by(pcode) %>%
     mutate(
-      tercile = ntile(total_rainfall, 3),
-      is_lower_tercile = tercile == 1,
+      tercile = cut(
+        total_rainfall,
+        breaks = c(-Inf, quantile(total_rainfall, probs = c(1/3, 2/3), na.rm = TRUE), Inf),
+        labels = c("1st", "2nd", "3rd"),
+        include.lowest = TRUE
+      ),
+      is_lower_tercile = tercile == "1st"
     ) %>%
     mutate(
       rank = rank(total_rainfall, ties.method = "average"),
