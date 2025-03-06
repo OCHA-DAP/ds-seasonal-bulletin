@@ -1,0 +1,90 @@
+body {
+    font-family: "Crimson Text", serif;
+  }
+  /* Headers */
+  h1 {
+      font-family: "Crimson Text", serif;
+      font-size: 18px;
+      padding: 15px;
+      max-width:940px;
+      margin: auto;
+  }
+  
+  h2 {
+      font-family: "Crimson Text", serif;
+      font-size: 16px;
+  }
+  
+  h3 {
+      font-family: "Crimson Text", serif;
+      font-size: 14px;
+  }
+  
+  h4 {
+      font-family: "Crimson Text", serif;
+      font-style: italic;
+      font-size: 12px;
+  }
+  
+  .footer {
+    background-color: #1bb580;
+    color:white;
+    text-align:center;
+    padding: 15px;
+  }
+  
+  blockquote {
+      padding: 10px 20px;
+      margin: 0 0 20px;
+      font-size: 14px;
+      border-left: 5px solid #eee;
+  }
+  
+/* .main-container {
+  max-width: none !important;
+}
+*/
+
+/* .container-fluid {
+  padding: 0px !important;
+} 
+*/
+
+.highlight {
+  border: 1px solid #B6B6B6;
+  border-radius: 2px;
+  padding:10px;
+  margin-bottom: 15px;
+  height: 200px;
+  display: flex;
+}
+
+.notes {
+  font-size: 12px;
+}
+
+.info {
+  border: 1px solid red;
+  padding: 10px;
+  height: 200px;
+  display: flex;
+}
+
+.sub-info {
+  height: 100%;
+  font-size: 18px;
+}
+.si-2 {
+  width: 66%;
+}
+.si-1 {
+  width: 33%;
+}
+
+
+#container {
+  max-width: 940px;
+  padding-left: 15px;
+  padding-right:15px;
+  margin: auto;
+}

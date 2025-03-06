@@ -1,0 +1,273 @@
+---
+output:
+  html_document
+params:
+  iso3: SOM
+  adm_level: 1
+  dataset: seas5
+  season: MAM
+  issued_month: 3
+  year: 2025
+---
+
+# `r paste(params$iso3, ":", params$season, params$year, "Season Outlook")`
+#### Generated `r Sys.Date()` from ECMWF `r toupper(params$dataset)` data issued `r paste(month.abb[params$issued_month], params$year)`
+
+```{r setup, include = FALSE, message = FALSE, warning = FALSE}
+
+library(kableExtra)
+library(knitr)
+library(gghdx)
+library(cumulus)
+library(AzureStor)
+library(stringr)
+library(janitor)
+source("../R/load_data.R")
+source("../R/process_data.R")
+source("../R/plot_data.R")
+source("../R/cogs.R")
+knitr::opts_chunk$set(echo = TRUE) # do not print code by default
+knitr::opts_chunk$set(include = FALSE) # do not print output by default
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+gghdx()
+
+# Necessary for reading raster files via GDAL
+Sys.setenv(AZURE_STORAGE_SAS_TOKEN = Sys.getenv("DS_AZ_BLOB_PROD_SAS_WRITE"))
+Sys.setenv(AZURE_STORAGE_ACCOUNT = "imb0chd0prod")
+
+```
+
+``` {r constants}
+
+if (params$season == "MAM") {
+  months_to_include <- c(3, 4, 5)
+} else if (params$season == "OND") {
+  months_to_include <- c(10, 11, 12)
+}
+
+gdf_pop <- get_gdf_pop(params$iso3, params$adm_level)
+sel_zones <- subset_pcodes(params)
+pcode_col <- glue("ADM{params$adm_level}_PCODE")
+
+```
+
+```{r loading}
+
+df_rainfall <- get_historical_rainfall(params$dataset, params$iso3, params$adm_level, sel_zones)
+
+if (params$dataset == "seas5") {
+  df_rainfall_proc <- process_seas5_rainfall(
+    df_rainfall,
+    sel_month = params$issued_month,
+    months_to_include = months_to_include
+  )
+} else if (params$dataset == "era5") {
+  df_rainfall_proc <- process_era5_rainfall(
+    df_rainfall,
+    months_to_include = months_to_include
+  )
+}
+
+df_summary <- join_pop_rainfall(gdf_pop, df_rainfall_proc, pcode_col)
+```
+
+``` {r summarize}
+
+df_annual_pop <- calc_yearly_impact(df_summary) %>%
+  mutate(
+    rank = rank(-total_affected, ties.method = "average"),
+    exceedance_prob = rank / (n() + 1),
+    return_period = 1 / exceedance_prob
+  )
+
+df_sel <- df_annual_pop %>%
+  filter(year == params$year)
+
+total_affected <- df_sel$total_affected
+total_rp <- df_sel$return_period
+
+```
+
+`r format(round(total_affected), big.mark=",")` people are forecasted to experience lower tercile rainfall throughout the upcoming season.
+
+We see this level of people in need once every `r round(total_rp, 1)` years.
+
+
+``` {r load_cog_stack}
+
+proj_container <- cumulus::blob_containers("dev")$projects
+rast_container <- cumulus::blob_containers("prod")$raster
+tmp_dir <- "tmp/"
+azure_dir <- "ds-seasonal-bulletin/"
+src_cog_dir <- paste0(params$dataset, "/monthly/processed")
+
+# First check if the COGs (average and current) exist already
+f_avg <- cog_filename(params$iso3, "avg", params$dataset, params$season, params$year, params$issued_month)
+azure_filepath_avg <- paste0(azure_dir, params$iso3, "/", f_avg)
+local_filepath_avg <- paste0(tmp_dir, f_avg)
+exists_avg <- cog_exists(proj_container, azure_filepath_avg)
+
+f_cur <- cog_filename(params$iso3, "cur", params$dataset, params$season, params$year, params$issued_month)
+azure_filepath_cur <- paste0(azure_dir, params$iso3, "/", f_cur)
+local_filepath_cur <- paste0(tmp_dir, f_cur)
+exists_cur <- cog_exists(proj_container, azure_filepath_cur)
+
+if (exists_avg && exists_cur) {
+  r_avg <- load_cog_from_azure(
+    proj_container,
+    azure_filepath_avg,
+    local_filepath_avg
+  )
+  r_cur <- load_cog_from_azure(
+    proj_container,
+    azure_filepath_cur,
+    local_filepath_cur
+  )
+} else {
+  cog_df <- get_cogs_to_process(
+    rast_container,
+    params$dataset,
+    months_to_include,
+    params$issued_month
+  )
+
+  # TODO: Improve this processing -- see Zack suggestions
+  # Load by year, take the sum, then stack
+  yearly_sums <- list()
+  for (sel_year in unique(cog_df$year)) {
+    yearly_cogs <- filter(cog_df, year == sel_year)
+    urls <- paste0("/vsiaz/raster/", yearly_cogs$name)
+    cogs <- rast(urls)
+    cogs_clipped <- crop(cogs, gdf_pop)
+    cogs_masked <- mask(cogs_clipped, gdf_pop)
+    # go from mm/day to mm/month
+    yearly_sum <- sum((cogs_masked * 30))
+    if (sel_year == max(cog_df$year)) {
+      r_cur <- yearly_sum
+    }
+    yearly_sums <- append(yearly_sums, yearly_sum)
+  }
+
+  r_avg <- mean(yearly_sums)
+
+  # Now save to Azure
+  upload_cog_to_azure(
+    r_cur,
+    proj_container,
+    local_filepath_cur,
+    azure_filepath_cur
+  )
+  upload_cog_to_azure(
+    r_avg,
+    proj_container,
+    local_filepath_avg,
+    azure_filepath_avg
+  )
+}
+
+```
+
+``` {r plot_anomalies, include = TRUE, echo = FALSE, fig.width=10, fig.height=5}
+
+# If applicable, subset the gdf by only the selected zones
+if (!is.null(sel_zones)) {
+  gdf_sel <- gdf_pop %>% filter(!!sym(pcode_col) %in% sel_zones)
+} else {
+  gdf_sel <- gdf_pop
+}
+
+plot_anomalies(r_avg, r_cur, gdf_sel)
+```
+
+
+
+``` {r rp_plot, include = TRUE, echo = FALSE, fig.height=5}
+
+affected_zones <- str_split(df_sel$affected_zones, ", ")[[1]]
+df_summary_year <- df_summary %>% filter(year == params$year)
+
+# Join again with all adms
+gdf_rp <- gdf_pop %>%
+  left_join(df_summary_year, by = setNames("pcode", pcode_col))
+
+# Get all pcodes in the lower quantile
+gdf_lower_quantile <- gdf_pop %>%
+  filter(!!sym(pcode_col) %in% affected_zones)
+
+plot_return_periods(gdf_rp, gdf_lower_quantile)
+```
+
+``` {r calc_yearly_avg}
+df_rainfall_annual <- df_summary %>%
+  group_by(year) %>%
+  summarise(total_rainfall = sum(total_rainfall, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(total_rainfall) %>%
+  mutate(year = as.numeric(year))
+
+df_pop_annual <- df_summary %>%
+  group_by(year) %>%
+  summarise(total_pop = sum(TotalPop_tercile, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(total_pop) %>%
+  mutate(year = as.numeric(year))
+```
+
+
+``` {r,include = TRUE, echo = FALSE, fig.width=10, fig.height=5}
+
+# These years will be highlighted on the chart
+REFERENCE_YEARS <- c(2023, 2022, 2020, 2014, 2024)
+
+df_annual_summary <- df_pop_annual %>%
+  full_join(df_rainfall_annual, by = "year") %>%
+  mutate(point_color = case_when(
+    year==params$year~hdx_hex("tomato-hdx"),
+    year %in% REFERENCE_YEARS ~ hdx_hex("sapphire-light"),
+    TRUE ~ hdx_hex("sapphire-hdx"))) %>%
+  filter(year > 2000) # filtering to more recent years -- greater than 2000
+
+plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, params$year)
+
+```
+
+```{r include=TRUE, echo=FALSE, results='asis'}
+
+drop_cols <- c(
+  "ADM0_PCODE",
+  "year",
+  "is_lower_tercile",
+  "VALIDON",
+  "VALIDTO",
+  "geom",
+  "ADM0_EN",
+  "DATE",
+  "TotalPop_tercile",
+  "exceedance_prob"
+)
+
+df_summary_display <- df_summary_year %>%
+  select(-all_of(drop_cols)) %>%
+  arrange(desc(return_period)) %>%
+  janitor::clean_names()
+
+knitr::kable(
+  df_summary_display,
+  digits = 3,
+  align='c',
+  format.args = list(big.mark = ",")
+)
+
+f <- paste0(
+  "ds-seasonal-bulletin/",
+  params$iso3, "/",
+  params$iso3, "_",
+  toupper(params$dataset), "_",
+  params$season, "_",
+  sprintf("i%d-%02d", params$year, params$issued_month), ".csv"
+)
+
+
+cumulus::blob_write(df_summary_display, f, "dev")
+```

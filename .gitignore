@@ -1,0 +1,6 @@
+*.html
+plots/*
+text/*
+.DS_Store
+tmp/*
+analysis/tmp/*
