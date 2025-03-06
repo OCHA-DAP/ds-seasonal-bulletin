@@ -24,11 +24,14 @@ for (country_name in names(country_configs)) {
     )
 
     output_filename <- paste0(
-        params_list$iso3, "_", 
-        params_list$season, "_", 
-        params_list$year, 
-        "_i",
-        Sys.Date(),
+        params_list$iso3, "_",
+        params_list$season, "_",
+        toupper(params_list$dataset), "_",
+        sprintf(
+            "i%d-%02d",
+            params_list$year,
+            params_list$issued_month
+        ),
         "_outlook.html"
     )
 
