@@ -21,6 +21,7 @@ library(gghdx)
 library(cumulus)
 library(AzureStor)
 library(stringr)
+library(janitor)
 source("../R/load_data.R")
 source("../R/process_data.R")
 source("../R/plot_data.R")
@@ -98,12 +99,12 @@ azure_dir <- "ds-seasonal-bulletin/"
 src_cog_dir <- paste0(params$dataset, "/monthly/processed")
 
 # First check if the COGs (average and current) exist already
-f_avg <- cog_filename(params$iso3, "avg", params$dataset, params$season, params$issued_month)
+f_avg <- cog_filename(params$iso3, "avg", params$dataset, params$season, params$year, params$issued_month)
 azure_filepath_avg <- paste0(azure_dir, params$iso3, "/", f_avg)
 local_filepath_avg <- paste0(tmp_dir, f_avg)
 exists_avg <- cog_exists(proj_container, azure_filepath_avg)
 
-f_cur <- cog_filename(params$iso3, "cur", params$dataset, params$season, params$issued_month)
+f_cur <- cog_filename(params$iso3, "cur", params$dataset, params$season, params$year, params$issued_month)
 azure_filepath_cur <- paste0(azure_dir, params$iso3, "/", f_cur)
 local_filepath_cur <- paste0(tmp_dir, f_cur)
 exists_cur <- cog_exists(proj_container, azure_filepath_cur)
@@ -193,7 +194,6 @@ gdf_lower_quantile <- gdf_pop %>%
 plot_return_periods(gdf_rp, gdf_lower_quantile)
 ```
 
-
 ``` {r calc_yearly_avg}
 df_rainfall_annual <- df_summary %>%
   group_by(year) %>%
@@ -226,4 +226,44 @@ df_annual_summary <- df_pop_annual %>%
 
 plot_annual_scatter(df_annual_summary, REFERENCE_YEARS, params$year)
 
+```
+
+```{r include=TRUE, echo=FALSE, results='asis'}
+
+drop_cols <- c(
+  "ADM0_PCODE",
+  "year",
+  "is_lower_tercile",
+  "VALIDON",
+  "VALIDTO",
+  "geom",
+  "ADM0_EN",
+  "DATE",
+  "TotalPop_tercile",
+  "exceedance_prob"
+)
+
+df_summary_display <- df_summary_year %>%
+  select(-all_of(drop_cols)) %>%
+  arrange(desc(return_period)) %>%
+  janitor::clean_names()
+
+knitr::kable(
+  df_summary_display,
+  digits = 3,
+  align='c',
+  format.args = list(big.mark = ",")
+)
+
+f <- paste0(
+  "ds-seasonal-bulletin/",
+  params$iso3, "/",
+  params$iso3, "_",
+  toupper(params$dataset), "_",
+  params$season, "_",
+  sprintf("i%d-%02d", params$year, params$issued_month), ".csv"
+)
+
+
+cumulus::blob_write(df_summary_display, f, "dev")
 ```

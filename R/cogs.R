@@ -1,8 +1,14 @@
 library(terra)
 library(dplyr)
 
-cog_filename <- function(iso3, type, dataset, season, issued_month){
-    return(paste0(iso3, "_", type, "_", dataset, "_", season, "_issued", issued_month, ".tif"))
+cog_filename <- function(iso3, type, dataset, season, year, issued_month){
+    return(paste0(
+        iso3, "_",
+        toupper(dataset), "_",
+        season, "_",
+        sprintf("i%d-%02d", year, issued_month), "_",
+        type, ".tif")
+    )
 }
 
 cog_exists <- function(container, azure_filepath) {
