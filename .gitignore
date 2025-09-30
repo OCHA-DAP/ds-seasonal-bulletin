@@ -4,3 +4,8 @@ text/*
 .DS_Store
 tmp/*
 analysis/tmp/*
+__marimo__/*
+*/__pycache__/*
+src/datasources/__pycache__/*
+src/utils/__pycache__/*
+.env

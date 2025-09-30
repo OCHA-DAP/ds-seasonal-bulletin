@@ -1,0 +1,7 @@
+marimo
+pandas
+ocha-stratus
+plotly
+matplotlib
+python-dotenv
+xarray
