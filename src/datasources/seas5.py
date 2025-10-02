@@ -1,41 +1,39 @@
-from src.utils import rp_calc
+import ocha_stratus as stratus
+import pandas as pd
 
 
-def process_seas5(df_seas5, months, issued_month):
+def get_season_stats(iso3, adm_level, issued_month, valid_months, stage="prod"):
+    valid_months_str = ','.join(map(str, valid_months))
+    engine = stratus.get_engine(stage)
+    with engine.connect() as conn:
+        df = pd.read_sql(
+            f"""select * 
+            from seas5 
+            where iso3='{iso3}' 
+            and adm_level={adm_level}
+            and extract(month from issued_date)={issued_month}
+            and extract(month from valid_date) in ({valid_months_str})
+            """,
+            con=conn,
+            parse_dates=["valid_date", "issued_date"],
+        )
+    return df
 
-    _df_1 = df_seas5.copy()
-    # Convert dates and create month/year columns
-    _df_1["year"] = _df_1["valid_date"].dt.year
-    _df_1["valid_month"] = _df_1["valid_date"].dt.month
-    _df_1["issued_month"] = _df_1["issued_date"].dt.month
-
-    # Filter to only the forecasts from the selected issue_month
-    # and from the same season
-    _df_1 = _df_1[_df_1["valid_month"].isin(months)]
-    _df_1 = _df_1[_df_1["issued_month"] == issued_month]
-
-    assert list(_df_1["valid_month"].unique()) == months
-
-    # Transform from mm/day to mm/season
-    # NOTE: DOESN'T HANDLE SEASONS THAT CROSS DEC-JAN
-    _df_1["days_in_month"] = _df_1["valid_date"].dt.days_in_month
-    _df_1["mm_month"] = _df_1["mean"] * _df_1["days_in_month"]
-    _df_2 = (
-        _df_1.groupby(["pcode", "year"])
-        .agg({"mm_month": lambda x: x.sum()})
+def total_seasonal_precip(df):
+    _df = df.copy()
+    _df["season"] =  _df.groupby('issued_date')['valid_date'].transform(lambda x: x.dt.year.min()) 
+    # TODO: Switch from 'mean' to 'sum'
+    _df["sum_month"] = _df["mean"] * _df["valid_date"].dt.days_in_month
+    _df2 = (
+        _df.groupby(["pcode", "season"])
+        .agg({"sum_month": lambda x: x.sum()})
         .reset_index()
     )
-    _df_2.rename(columns={"mm_month": "total_rainfall"}, inplace=True)
+    _df2 = _df2.rename(columns={"sum_month": "sum_season"})
+    return _df2
 
-    # Identify cases in the lower tercile
-    _df_2["lower_tercile_threshold"] = _df_2.groupby("pcode")[
-        "total_rainfall"
-    ].transform(lambda x: x.quantile(1 / 3))
-    _df_2["is_lower_tercile"] = (
-        _df_2["total_rainfall"] <= _df_2["lower_tercile_threshold"]
-    )
-
-    # Calculate return period
-    _df_2 = rp_calc.calculate_groups_rp(_df_2, "pcode", "total_rainfall")
-
-    return _df_2
+def classify_groups_quantile(df, column, q=0.33, condition="below"):
+    _df = df.copy()
+    _df["q_threshold"] = _df.groupby("pcode")[column].transform(lambda x: x.quantile(q))
+    _df["meets_threshold"] = (_df[column] <= _df["q_threshold"]) if condition == "below" else (_df[column] >= _df["q_threshold"])
+    return _df

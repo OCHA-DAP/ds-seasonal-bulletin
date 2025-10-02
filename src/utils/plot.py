@@ -14,8 +14,9 @@ def plot_rp_map(gdf_merged, adm_level):
         gdf_merged,
         geojson=gdf_merged.geometry,
         locations=gdf_merged.index,
-        color="total_rainfall_rp",
+        color="sum_season_rp",
         color_continuous_scale="Reds",
+        range_color=[1, 50],
         map_style="carto-voyager-nolabels",
         center={
             "lat": gdf_merged.geometry.centroid.y.mean(),
@@ -23,11 +24,11 @@ def plot_rp_map(gdf_merged, adm_level):
         },
         zoom=4.5,
         opacity=0.9,
-        labels={"total_rainfall_rp": "Return Period<br>(years)"},
+        labels={"sum_season_rp": "Return Period<br>(years)"},
         custom_data=[
             f"ADM{adm_level}_EN",
-            "total_rainfall_rp",
-            "is_lower_tercile",
+            "sum_season_rp",
+            "meets_threshold",
         ],
     )
 
@@ -40,7 +41,7 @@ def plot_rp_map(gdf_merged, adm_level):
     )
 
     # Add red outlines with legend (only if there are lower tercile regions)
-    lower_tercile_data = gdf_merged[gdf_merged["is_lower_tercile"] == True]
+    lower_tercile_data = gdf_merged[gdf_merged["meets_threshold"] == True]
 
     if not lower_tercile_data.empty:
         first = True
@@ -66,7 +67,7 @@ def plot_rp_map(gdf_merged, adm_level):
                 first = False
 
         # Add grey choropleth for null values
-    null_data = gdf_merged[gdf_merged["total_rainfall_rp"].isna()]
+    null_data = gdf_merged[gdf_merged["sum_season_rp"].isna()]
 
     if not null_data.empty:
         fig.add_trace(
@@ -114,7 +115,7 @@ def plot_annual_scatter(
 ):
 
     _df = df_annual_summary.copy()
-    _df = _df[_df.year >= 2000]
+    _df = _df[_df.season >= 2000]
 
     # Assign colors based on year type
     def get_color(y):
@@ -125,7 +126,7 @@ def plot_annual_scatter(
         else:
             return SAPPHIRE
 
-    _df["point_color"] = _df["year"].apply(get_color)
+    _df["point_color"] = _df["season"].apply(get_color)
 
     # Create figure
     fig = go.Figure()
@@ -133,26 +134,26 @@ def plot_annual_scatter(
     # Add all points
     fig.add_trace(
         go.Scatter(
-            x=_df["total_rainfall"],
+            x=_df["sum_season"],
             y=_df["pop_lower_tercile"],
             mode="markers",
             marker=dict(color=_df["point_color"], size=8),
             showlegend=False,
             hovertemplate="Year: %{text}<br>Rainfall: %{x:,.0f} mm<br>Population affected: %{y:,.0f}<extra></extra>",
-            text=_df["year"],
+            text=_df["season"],
         )
     )
 
     # Add labels for reference and highlight years
     years_to_label = reference_years + [highlight_year]
-    df_labeled = _df[df_annual_summary["year"].isin(years_to_label)]
+    df_labeled = _df[df_annual_summary["season"].isin(years_to_label)]
 
     fig.add_trace(
         go.Scatter(
-            x=df_labeled["total_rainfall"],
+            x=df_labeled["sum_season"],
             y=df_labeled["pop_lower_tercile"],
             mode="text",
-            text=df_labeled["year"],
+            text=df_labeled["season"],
             textposition="top center",
             textfont=dict(size=12, color=df_labeled["point_color"]),
             showlegend=False,
