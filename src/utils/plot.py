@@ -9,18 +9,24 @@ LIGHT_GRAY = "#eeeeee"
 DARK_GRAY = "#888888"
 
 
-def plot_rp_map(gdf_merged, adm_level):
+def plot_map(gdf, adm_level, variable):
+    if variable == "population": 
+        color_scale = "Blues"
+        color_range = [gdf.population.min(), gdf.population.max()]
+    elif variable == "sum_season_rp":
+        color_scale = "Reds"
+        color_range = [1, 50]  # Because we have 45 seasons
     fig = px.choropleth_map(
-        gdf_merged,
-        geojson=gdf_merged.geometry,
-        locations=gdf_merged.index,
-        color="sum_season_rp",
-        color_continuous_scale="Reds",
-        range_color=[1, 50],
+        gdf,
+        geojson=gdf.geometry,
+        locations=gdf.index,
+        color=variable,
+        color_continuous_scale=color_scale,
+        range_color=color_range,
         map_style="carto-voyager-nolabels",
         center={
-            "lat": gdf_merged.geometry.centroid.y.mean(),
-            "lon": gdf_merged.geometry.centroid.x.mean(),
+            "lat": gdf.geometry.centroid.y.mean(),
+            "lon": gdf.geometry.centroid.x.mean(),
         },
         zoom=4.5,
         opacity=0.9,
@@ -29,6 +35,7 @@ def plot_rp_map(gdf_merged, adm_level):
             f"ADM{adm_level}_EN",
             "sum_season_rp",
             "meets_threshold",
+            "population"
         ],
     )
 
@@ -36,12 +43,14 @@ def plot_rp_map(gdf_merged, adm_level):
     fig.update_traces(
         hovertemplate="<b>%{customdata[0]}</b><br>"
         + "RP: %{customdata[1]:.1f}<br>"
-        + "Below average: %{customdata[2]}<extra></extra>",
+        + "Below average: %{customdata[2]}<br>"
+        + "Population: %{customdata[3]:,}"
+        + "<extra></extra>",
         selector=dict(type="choroplethmap"),
     )
 
     # Add red outlines with legend (only if there are lower tercile regions)
-    lower_tercile_data = gdf_merged[gdf_merged["meets_threshold"] == True]
+    lower_tercile_data = gdf[gdf["meets_threshold"] == True]
 
     if not lower_tercile_data.empty:
         first = True
@@ -67,7 +76,7 @@ def plot_rp_map(gdf_merged, adm_level):
                 first = False
 
         # Add grey choropleth for null values
-    null_data = gdf_merged[gdf_merged["sum_season_rp"].isna()]
+    null_data = gdf[gdf["sum_season_rp"].isna()]
 
     if not null_data.empty:
         fig.add_trace(

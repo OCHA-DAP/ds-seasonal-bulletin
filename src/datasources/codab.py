@@ -55,4 +55,9 @@ def subset_aoi(iso3: str):
             "ET1600",
             "ET0811",
         ]
+        # gdf_southern_pastoral = stratus.load_shp_from_blob(
+        #     blob_name="ds-seasonal-bulletin/ETH/misc/eth_southern_pastoral.zip",
+        #     shapefile="eth_southern_pastoral.shp"
+        # )
+        # return list(gdf_southern_pastoral.ADM2_PCODE)
     return list(df_mam_ond.admin2Pcode) + additional_zones

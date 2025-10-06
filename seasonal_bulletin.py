@@ -13,8 +13,8 @@ def _():
 @app.cell
 def inputs(mo):
     seasons = {"MAM": [3, 4, 5], "JJAS": [6, 7, 8, 9], "OND": [10, 11, 12]}
-    countries = {"Ethiopia": "ETH", "Somalia": "SOM"}
-    admin_levels = [0, 1, 2]
+    countries = {"Ethiopia": "ETH", "Somalia": "SOM", "Burkina Faso": "BFA"}
+    admin_levels = [1, 2]
 
     iso3_dropdown = mo.ui.dropdown(
         options=countries,
@@ -26,10 +26,10 @@ def inputs(mo):
     )
     season_dropdown = mo.ui.dropdown(options=seasons, value="OND", label="Season")
     season_year_dropdown = mo.ui.dropdown(
-        options=range(2020, 2026), value=2025, label="Season year"
+        options=range(2020, 2027), value=2025, label="Season year"
     )
-    leadtime_month_dropdown = mo.ui.dropdown(
-        label="Forecast leadtime (months)", options=range(0, 7), value=1
+    data_source_dropdown = mo.ui.dropdown(
+        label="Data source", options=["forecast", "reanalysis"], value="forecast"
     )
 
     mo.hstack(
@@ -38,14 +38,14 @@ def inputs(mo):
             adm_level_dropdown,
             season_dropdown,
             season_year_dropdown,
-            leadtime_month_dropdown,
+            data_source_dropdown,
         ],
         justify="center",
     )
     return (
         adm_level_dropdown,
+        data_source_dropdown,
         iso3_dropdown,
-        leadtime_month_dropdown,
         season_dropdown,
         season_year_dropdown,
     )
@@ -53,7 +53,46 @@ def inputs(mo):
 
 @app.cell
 def _(
+    data_source_dropdown,
+    datetime,
+    mo,
+    season_dropdown,
+    season_year_dropdown,
+):
+    # Check if forecast or reanalysis data is available
+
+    now = datetime.now()
+    leadtime_month_dropdown = None
+
+    if data_source_dropdown.value == "reanalysis":
+        # Check if the reanalysis data is available
+        reanalysis_available = (
+            season_year_dropdown.value,
+            season_dropdown.value[-1],
+        ) <= (now.year, now.month - 1)
+
+        mo.stop(not reanalysis_available, mo.center(mo.md("Reanalysis data not available yet!")))
+    
+    elif data_source_dropdown.value == "forecast":
+        # Check if forecast data is available
+        forecast_available = (
+            season_year_dropdown.value,
+            season_dropdown.value[0],
+        ) <= (now.year, now.month)
+
+        mo.stop(not forecast_available, mo.center(mo.md("Forecast data not available yet!")))
+        leadtime_month_dropdown = mo.ui.dropdown(
+            label="Forecast leadtime (months)", options=range(0, 7), value=1
+        )
+    mo.hstack([leadtime_month_dropdown], justify="center")
+    return (leadtime_month_dropdown,)
+
+
+@app.cell
+def _(
     adm_level_dropdown,
+    calendar,
+    data_source_dropdown,
     iso3_dropdown,
     leadtime_month_dropdown,
     season_dropdown,
@@ -65,11 +104,16 @@ def _(
     stage = "prod"
     MONTHS = season_dropdown.value
     SEASON_YEAR = season_year_dropdown.value
-    ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
 
-    # CONSTANTS
-    dates = [f"{year}-{ISSUED_MONTH:02d}-01" for year in range(1981, 2026)]
-    return ADM_LEVEL, ISO3, ISSUED_MONTH, MONTHS, SEASON_YEAR
+    if data_source_dropdown.value == "forecast":
+        ISSUED_MONTH = (MONTHS[0] - leadtime_month_dropdown.value)
+        STACK_DATES = [f"{year}-{ISSUED_MONTH:02d}-01" for year in range(1981, 2026)]
+        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Outlook"
+        subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
+    else:
+        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Overview"
+        subtitle = f"#### ECMWF ERA5 Reanalysis"
+    return ADM_LEVEL, ISO3, ISSUED_MONTH, MONTHS, SEASON_YEAR, subtitle, title
 
 
 @app.cell
@@ -79,22 +123,14 @@ def _(mo):
 
 
 @app.cell
-def _(SEASON_YEAR, iso3_dropdown, mo, season_dropdown):
-    mo.center(
-        mo.md(
-            f"""# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Outlook"""
-        )
-    )
+def _(mo, title):
+    mo.center(mo.md(title))
     return
 
 
 @app.cell
-def _(ISSUED_MONTH, SEASON_YEAR, calendar, leadtime_month_dropdown, mo):
-    mo.center(
-        mo.md(
-            f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} (leadtime {leadtime_month_dropdown.value} months)"
-        )
-    )
+def _(mo, subtitle):
+    mo.center(mo.md(subtitle))
     return
 
 
@@ -108,7 +144,7 @@ def imports():
     import os
     from typing import Literal, List
     import xarray as xr
-    from src.datasources import codab, hapi, seas5
+    from src.datasources import codab, hapi, seas5, era5
     from src.utils import rp_calc, plot
     import ocha_stratus as stratus
     import calendar
@@ -120,6 +156,8 @@ def imports():
     return (
         calendar,
         codab,
+        datetime,
+        era5,
         hapi,
         monthrange,
         np,
@@ -173,22 +211,29 @@ def data_loading(
     return df_pop, df_seas5, gdf
 
 
+@app.function
+def lower_tercile_pop(df, df_pop, adm_level):
+    # Merge in the population and identify cases where people are in the lower tercile
+    _df = df.merge(
+        df_pop[
+            ["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]
+        ],
+        left_on="pcode",
+        right_on=f"admin{adm_level}_code",
+    )
+    _df["pop_lower_tercile"] = _df.apply(
+        lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
+    )
+    return _df
+
+
 @app.cell
 def _(ADM_LEVEL, ISO3, codab, df_pop, df_seas5, rp_calc, seas5):
     _df = seas5.total_seasonal_precip(df_seas5)
-    _df = seas5.classify_groups_quantile(_df, q=0.33, column="sum_season")
+    _df = rp_calc.classify_groups_quantile(_df, q=0.33, column="sum_season")
     _df = rp_calc.calculate_groups_rp(_df, "pcode", "sum_season")
+    df_seas5_processed = lower_tercile_pop(_df, df_pop, ADM_LEVEL)
 
-
-    # Merge in the population and identify cases where people are in the lower tercile
-    df_seas5_processed = _df.merge(
-        df_pop[["population", f"admin{ADM_LEVEL}_code", f"admin{ADM_LEVEL}_name"]],
-        left_on="pcode",
-        right_on=f"admin{ADM_LEVEL}_code",
-    )
-    df_seas5_processed["pop_lower_tercile"] = df_seas5_processed.apply(
-        lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
-    )
 
     # Subset to MAM/OND zones only for Ethiopia zones
     if (ISO3 == "ETH") and (ADM_LEVEL == 2):
@@ -200,18 +245,22 @@ def _(ADM_LEVEL, ISO3, codab, df_pop, df_seas5, rp_calc, seas5):
 
 
 @app.cell
-def _(SEASON_YEAR, df_seas5_processed, rp_calc):
-    df_annual_sum = (
+def df_annual_sum_seas5(SEASON_YEAR, df_seas5_processed, rp_calc):
+    _df = (
         df_seas5_processed.groupby("season")[["sum_season", "pop_lower_tercile"]]
         .sum()
         .reset_index()
     )
-    _df = rp_calc.calculate_one_group_rp(
-        df_annual_sum, "pop_lower_tercile", ascending=False
+    df_annual_sum_seas5 = rp_calc.calculate_one_group_rp(
+        _df, "pop_lower_tercile", ascending=False
     )
-    rp = _df.loc[_df["season"] == SEASON_YEAR]["pop_lower_tercile_rp"].values[0]
-    pop = _df.loc[_df["season"] == SEASON_YEAR]["pop_lower_tercile"].values[0]
-    return df_annual_sum, pop, rp
+    rp = df_annual_sum_seas5.loc[df_annual_sum_seas5["season"] == SEASON_YEAR][
+        "pop_lower_tercile_rp"
+    ].values[0]
+    pop = df_annual_sum_seas5.loc[df_annual_sum_seas5["season"] == SEASON_YEAR][
+        "pop_lower_tercile"
+    ].values[0]
+    return df_annual_sum_seas5, pop, rp
 
 
 @app.cell
@@ -221,25 +270,11 @@ def _(mo, pop, rp, season_dropdown):
 
 
 @app.cell
-def df_pop_rps(df_seas5_processed, rp_calc):
-    # Now calculate the return periods of population in the lower tercile of values
-    _df = (
-        df_seas5_processed.groupby("season")["pop_lower_tercile"]
-        .sum()
-        .reset_index()
-    )
-    df_pop_rps = rp_calc.calculate_one_group_rp(
-        _df, "pop_lower_tercile", ascending=False
-    )  # False because a higher number is worse
-    return
-
-
-@app.cell
 def gdf_merged(ADM_LEVEL, SEASON_YEAR, df_seas5_processed, gdf):
     # Get the data for just this year and join with the geodataframe to plot
     _df = df_seas5_processed[df_seas5_processed.season == SEASON_YEAR]
     gdf_merged = gdf.merge(
-        _df[["pcode", "sum_season_rp", "meets_threshold"]],
+        _df[["pcode", "sum_season_rp", "meets_threshold", "population"]],
         left_on=f"ADM{ADM_LEVEL}_PCODE",
         right_on="pcode",
         how="left",
@@ -251,6 +286,7 @@ def gdf_merged(ADM_LEVEL, SEASON_YEAR, df_seas5_processed, gdf):
             "pcode",
             "sum_season_rp",
             "meets_threshold",
+            "population",
             "geometry",
         ]
     ]
@@ -259,14 +295,28 @@ def gdf_merged(ADM_LEVEL, SEASON_YEAR, df_seas5_processed, gdf):
 
 
 @app.cell
-def graph_rp(ADM_LEVEL, gdf_merged, plot):
-    plot.plot_rp_map(gdf_merged, ADM_LEVEL)
+def _(mo):
+    map_variable = mo.ui.radio(
+        options=["population", "sum_season_rp"],
+        label="Select variable to display:",
+        value="sum_season_rp",
+        inline=True,
+    )
+    map_variable
+    return (map_variable,)
+
+
+@app.cell
+def graph_rp(ADM_LEVEL, gdf_merged, map_variable, plot):
+    plot.plot_map(gdf_merged, ADM_LEVEL, map_variable.value)
     return
 
 
 @app.cell
-def graph_scatter(SEASON_YEAR, df_annual_sum, plot):
-    plot.plot_annual_scatter(df_annual_sum, list(range(2020, 2025)), SEASON_YEAR)
+def graph_scatter(SEASON_YEAR, df_annual_sum_seas5, plot):
+    plot.plot_annual_scatter(
+        df_annual_sum_seas5, list(range(2020, 2025)), SEASON_YEAR
+    )
     return
 
 
@@ -301,9 +351,6 @@ def _(avg, cur, gdf_merged, np, px):
     # 2. Balance the color scale around zero
     vmax = np.abs(anom_clipped).max().values.item()
     vmin = -vmax
-
-    print(vmin)
-    print(vmax)
 
     # 3. Create the plot with balanced colors and no axis labels
     fig = px.imshow(
@@ -344,7 +391,141 @@ def _(avg, cur, gdf_merged, np, px):
 
 
 @app.cell
-def _():
+def _(mo):
+    mo.md(r"""# ERA5 MAM download""")
+    return
+
+
+@app.cell
+def _(ADM_LEVEL, ISO3, codab, df_pop, era5, rp_calc):
+    df_era5 = era5.get_season_stats(ISO3, ADM_LEVEL, [3, 4, 5])
+    _df = era5.total_seasonal_precip(df_era5)
+    _df = rp_calc.classify_groups_quantile(_df, q=0.33, column="sum_season")
+    _df = rp_calc.calculate_groups_rp(_df, "pcode", "sum_season")
+
+
+    # Merge in the population and identify cases where people are in the lower tercile
+    df_era5_processed = _df.merge(
+        df_pop[["population", f"admin{ADM_LEVEL}_code", f"admin{ADM_LEVEL}_name"]],
+        left_on="pcode",
+        right_on=f"admin{ADM_LEVEL}_code",
+    )
+    df_era5_processed["pop_lower_tercile"] = df_era5_processed.apply(
+        lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
+    )
+
+    # Subset to MAM/OND zones only for Ethiopia zones
+    if (ISO3 == "ETH") and (ADM_LEVEL == 2):
+        _sel_aoi = codab.subset_aoi(ISO3)
+        df_era5_processed = df_era5_processed[
+            df_era5_processed.pcode.isin(_sel_aoi)
+        ]
+    return (df_era5_processed,)
+
+
+@app.cell
+def _(df_era5_processed, rp_calc):
+    _df = (
+        df_era5_processed.groupby("season")[["sum_season", "pop_lower_tercile"]]
+        .sum()
+        .reset_index()
+    )
+    df_annual_sum_era5 = rp_calc.calculate_one_group_rp(
+        _df, "pop_lower_tercile", ascending=False
+    )
+    return (df_annual_sum_era5,)
+
+
+@app.cell
+def _(df_annual_sum_era5):
+    df_annual_sum_era5
+    return
+
+
+@app.cell
+def _(df_annual_sum_era5, px):
+    _fig = px.scatter(
+        df_annual_sum_era5,
+        x="pop_lower_tercile",
+        y="pop_lower_tercile_rp",
+        template="simple_white",
+    )
+    _fig.update_layout(
+        height=300,
+        yaxis_title="Return Period",
+        xaxis_title="Population Exposed",
+        title="Return Periods of MAM Population Exposed to Below Average Rainfall",
+    )
+    _fig
+    return
+
+
+@app.cell
+def _(df_annual_sum_seas5, px):
+    _fig = px.scatter(
+        df_annual_sum_seas5,
+        x="pop_lower_tercile",
+        y="pop_lower_tercile_rp",
+        template="simple_white",
+    )
+    _fig.update_layout(
+        height=300,
+        yaxis_title="Return Period",
+        xaxis_title="Population Exposed",
+        title="Return Periods of OND Population Exposed to Below Average Rainfall",
+    )
+    _fig
+    return
+
+
+@app.cell
+def _(df_annual_sum_era5, df_annual_sum_seas5):
+    df_annual_joined = df_annual_sum_seas5[["season", "pop_lower_tercile"]].merge(
+        df_annual_sum_era5[["season", "pop_lower_tercile"]],
+        on="season",
+        suffixes=["_ond", "_mam"],
+    )
+    return (df_annual_joined,)
+
+
+@app.cell
+def _(df_annual_joined, pop, px):
+    _fig = px.bar(
+        df_annual_joined,
+        x="season",
+        y=["pop_lower_tercile_ond", "pop_lower_tercile_mam"],
+        title="Wide-Form Input",
+        barmode="group",
+        template="simple_white",
+    )
+
+    _fig.add_hrect(
+        y0=pop, y1=pop + (pop * 0.001), line_width=0, fillcolor="red", opacity=0.9
+    )
+
+    _fig.update_layout(
+        height=500,
+        yaxis_title="Population Exposed",
+        xaxis_title="Season",
+        title="Annual Population Exposed to Below Average Rainfall - OND and MAM",
+    )
+    _fig
+    return
+
+
+@app.cell
+def _(df_annual_joined):
+    df_annual_joined["max_exposed"] = df_annual_joined[
+        ["pop_lower_tercile_mam", "pop_lower_tercile_ond"]
+    ].max(axis=1)
+    return
+
+
+@app.cell
+def _(df_annual_joined, rp_calc):
+    rp_calc.calculate_one_group_rp(
+        df_annual_joined, "max_exposed", ascending=False
+    )
     return
 
 

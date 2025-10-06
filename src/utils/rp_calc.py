@@ -22,9 +22,10 @@ def calculate_one_group_rp(group, col_name: str = "q", ascending: bool = True):
     pd.DataFrame
         The input group with the RP columns added.
     """
-    group[f"{col_name}_rank"] = group[col_name].rank(ascending=ascending)
-    group[f"{col_name}_rp"] = (len(group) + 1) / group[f"{col_name}_rank"]
-    return group
+    _df = group.copy()
+    _df[f"{col_name}_rank"] = _df[col_name].rank(ascending=ascending)
+    _df[f"{col_name}_rp"] = (len(_df) + 1) / _df[f"{col_name}_rank"]
+    return _df
 
 
 def calculate_groups_rp(
@@ -44,8 +45,9 @@ def calculate_groups_rp(
     pd.DataFrame
         The input DataFrame with the RP columns added.
     """
+    _df = df.copy()
     return (
-        df.groupby(by)
+        _df.groupby(by)
         .apply(
             calculate_one_group_rp,
             include_groups=False,
@@ -55,3 +57,14 @@ def calculate_groups_rp(
         .reset_index()
         # .drop(columns="level_1")
     )
+
+
+def classify_groups_quantile(df, column, q=0.33, condition="below"):
+    _df = df.copy()
+    _df["q_threshold"] = _df.groupby("pcode")[column].transform(lambda x: x.quantile(q))
+    _df["meets_threshold"] = (
+        (_df[column] <= _df["q_threshold"])
+        if condition == "below"
+        else (_df[column] >= _df["q_threshold"])
+    )
+    return _df

@@ -2,29 +2,26 @@ import ocha_stratus as stratus
 import pandas as pd
 
 
-def get_season_stats(iso3, adm_level, issued_month, valid_months, stage="prod"):
+def get_season_stats(iso3, adm_level, valid_months, stage="prod"):
     valid_months_str = ",".join(map(str, valid_months))
     engine = stratus.get_engine(stage)
     with engine.connect() as conn:
         df = pd.read_sql(
             f"""select * 
-            from seas5 
+            from era5
             where iso3='{iso3}' 
             and adm_level={adm_level}
-            and extract(month from issued_date)={issued_month}
             and extract(month from valid_date) in ({valid_months_str})
             """,
             con=conn,
-            parse_dates=["valid_date", "issued_date"],
+            parse_dates=["valid_date"],
         )
     return df
 
-
 def total_seasonal_precip(df):
     _df = df.copy()
-    _df["season"] = _df.groupby("issued_date")["valid_date"].transform(
-        lambda x: x.dt.year.min()
-    )
+    # TODO: Handle Dec - Jan crossing
+    _df["season"] = _df["valid_date"].dt.year
     # TODO: Switch from 'mean' to 'sum'
     _df["sum_month"] = _df["mean"] * _df["valid_date"].dt.days_in_month
     _df2 = (
