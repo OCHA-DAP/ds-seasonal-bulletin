@@ -111,18 +111,20 @@ def _(
     MONTHS = season_dropdown.value
     SEASON_YEAR = season_year_dropdown.value
     DATASET = data_source_dropdown.value
+    CLIM_START = 1993  # Follows ECMWF
+    CLIM_END = 2016  # Follows ECMWF
 
     if DATASET == "forecast":
         ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
         STACK_DATES = [
-            f"{year}-{ISSUED_MONTH:02d}-01" for year in range(1981, 2026)
+            f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
         ]
         title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Outlook"
         subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
     else:
         ISSUED_MONTH = None
         STACK_DATES = [f"{year}-{month:02d}-01"
-             for year in range(1981, 2026) 
+             for year in range(CLIM_START, CLIM_END + 1)
              for month in MONTHS]
         title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Overview"
         subtitle = f"#### ECMWF ERA5 Reanalysis"
