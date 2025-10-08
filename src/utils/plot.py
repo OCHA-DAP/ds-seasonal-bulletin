@@ -1,5 +1,6 @@
 import plotly.graph_objects as go
 import plotly.express as px
+import numpy as np
 
 TOMATO = "#f2645a"
 SAPPHIRE = "#007ce0"
@@ -192,5 +193,49 @@ def plot_annual_scatter(
         height=400,
         hovermode="closest",
     )
+
+    return fig
+
+
+def plot_anomaly(ds, gdf):
+    anom_clipped = ds.rio.clip(gdf.geometry.values, gdf.crs, drop=True)
+
+    # 2. Balance the color scale around zero
+    vmax = np.abs(anom_clipped).max().values.item()
+    vmin = -vmax
+
+    # 3. Create the plot with balanced colors and no axis labels
+    fig = px.imshow(
+        anom_clipped,
+        origin="lower",
+        color_continuous_scale="RdBu",
+        zmin=vmin,
+        zmax=vmax,
+        aspect="equal",
+    )
+
+    # Remove axis labels and ticks
+    fig.update_xaxes(
+        showticklabels=False,
+        title="",
+        showgrid=False,
+        zeroline=False,
+        showline=False,
+        ticks="",
+    )
+    fig.update_yaxes(
+        showticklabels=False,
+        title="",
+        showgrid=False,
+        zeroline=False,
+        showline=False,
+        ticks="",
+    )
+    fig.update_coloraxes(
+        colorbar=dict(
+            title="Rainfall anomaly<br>(mm)",
+        )
+    )
+    fig.update_layout(template="simple_white")
 
     return fig
