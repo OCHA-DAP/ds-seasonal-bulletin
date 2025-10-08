@@ -424,7 +424,13 @@ def _(mo):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(
+    DATASET,
     ISSUED_MONTH,
     MONTHS,
     SEASON_YEAR,
@@ -438,7 +444,7 @@ def _(
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
-    da = get_cogs(STACK_DATES, gdf)
+    da = get_cogs(STACK_DATES, gdf, DATASET)
 
     # TODO: Does not handle year-crossing
     leadtimes = [month - ISSUED_MONTH for month in MONTHS]
