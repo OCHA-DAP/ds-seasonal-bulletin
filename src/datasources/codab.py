@@ -1,22 +1,7 @@
 import ocha_stratus as stratus
-from typing import Literal
 from dotenv import load_dotenv
 
 load_dotenv()
-
-
-def load_codab_from_blob(
-    iso3: str, admin_level: int = 0, stage: Literal["dev", "prod"] = "prod"
-):
-    iso3 = iso3.lower()
-    shapefile = f"{iso3}_adm{admin_level}.shp"
-    gdf = stratus.load_shp_from_blob(
-        container_name="polygon",
-        blob_name=f"{iso3.lower()}_shp.zip",
-        shapefile=shapefile,
-        stage=stage,
-    )
-    return gdf
 
 
 def subset_aoi(iso3: str):
