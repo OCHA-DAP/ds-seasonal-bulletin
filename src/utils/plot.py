@@ -236,6 +236,53 @@ def plot_anomaly(ds, gdf):
             title="Rainfall anomaly<br>(mm)",
         )
     )
-    fig.update_layout(template="simple_white")
+    fig.update_layout(
+        template="simple_white",
+        title="Anomalous precipitation",
+        width=500,
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+
+    return fig
+
+
+def plot_climatology(ds, gdf):
+    clim_clipped = ds.rio.clip(gdf.geometry.values, gdf.crs, drop=True)
+
+    fig = px.imshow(
+        clim_clipped,
+        origin="lower",
+        color_continuous_scale="Blues",
+        aspect="equal",
+    )
+
+    # Remove axis labels and ticks
+    fig.update_xaxes(
+        showticklabels=False,
+        title="",
+        showgrid=False,
+        zeroline=False,
+        showline=False,
+        ticks="",
+    )
+    fig.update_yaxes(
+        showticklabels=False,
+        title="",
+        showgrid=False,
+        zeroline=False,
+        showline=False,
+        ticks="",
+    )
+    fig.update_coloraxes(
+        colorbar=dict(
+            title="Seasonal rainfall<br>(mm)",
+        )
+    )
+    fig.update_layout(
+        template="simple_white",
+        title="Average historical precipitation",
+        width=500,
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
 
     return fig

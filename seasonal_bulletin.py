@@ -121,6 +121,9 @@ def _(
         subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
     else:
         ISSUED_MONTH = None
+        STACK_DATES = [f"{year}-{month:02d}-01"
+             for year in range(1981, 2026) 
+             for month in MONTHS]
         title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Overview"
         subtitle = f"#### ECMWF ERA5 Reanalysis"
     return (
@@ -130,6 +133,7 @@ def _(
         ISSUED_MONTH,
         MONTHS,
         SEASON_YEAR,
+        STACK_DATES,
         subtitle,
         title,
     )
@@ -190,8 +194,9 @@ def imports():
 @app.cell
 def cached_functions(era5, hapi, mo, seas5, stratus):
     @mo.persistent_cache
-    def get_cogs(dates, gdf):
-        return stratus.stack_cogs(dataset="seas5", dates=dates, clip_gdf=gdf)
+    def get_cogs(dates, gdf, dataset):
+        source = "seas5" if dataset=="forecast" else "era5"
+        return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
 
     @mo.persistent_cache
@@ -214,7 +219,7 @@ def cached_functions(era5, hapi, mo, seas5, stratus):
     @mo.persistent_cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
-    return get_pop, get_season_stats, load_codab_from_blob
+    return get_cogs, get_pop, get_season_stats, load_codab_from_blob
 
 
 @app.cell
@@ -302,13 +307,13 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.Html("<hr></hr><br>")
+    mo.Html("<hr></hr>")
     return
 
 
 @app.cell
 def _(mo, pop, rp, season_dropdown):
-    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_dropdown.selected_key} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years.""")
+    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_dropdown.selected_key} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
     return
 
 
@@ -328,7 +333,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.Html("<hr></hr><br>")
+    mo.Html("<hr></hr>")
     return
 
 
@@ -386,14 +391,47 @@ def graph_rp(
 
 
 @app.cell
-def _():
-    # ds_seas5 = get_cogs(dates, gdf)
+def _(mo):
+    mo.Html("<br><br>")
     return
 
 
 @app.cell
-def _(ISSUED_MONTH, MONTHS, SEASON_YEAR, ds_seas5, monthrange, pd):
-    da = ds_seas5.copy()
+def _(mo):
+    mo.md(r"""## Gridded rainfall anomaly""")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.Html("<hr></hr>")
+    return
+
+
+@app.cell
+def _(mo):
+    anomaly_switch = mo.ui.switch(label="Display anomaly? If not previously cached, the anomaly may take several minutes to compute!", value=False)
+    mo.callout(mo.hstack([anomaly_switch]), kind="warn")
+    return (anomaly_switch,)
+
+
+@app.cell
+def _(
+    ISSUED_MONTH,
+    MONTHS,
+    SEASON_YEAR,
+    STACK_DATES,
+    anomaly_switch,
+    gdf,
+    get_cogs,
+    mo,
+    monthrange,
+    pd,
+):
+    mo.stop(not anomaly_switch.value, mo.md(""))
+
+    da = get_cogs(STACK_DATES, gdf)
+
     # TODO: Does not handle year-crossing
     leadtimes = [month - ISSUED_MONTH for month in MONTHS]
     da = da.sel(leadtime=leadtimes)
@@ -410,15 +448,20 @@ def _(ISSUED_MONTH, MONTHS, SEASON_YEAR, ds_seas5, monthrange, pd):
     # Get current and average
     cur = da_yearly.sel(date=f"{SEASON_YEAR}-{str(ISSUED_MONTH).zfill(2)}-01")
     avg = da_yearly.mean(dim="date")
-    return avg, cur
+
+    # Compute anomaly
+    anom = cur - avg
+    return anom, avg
 
 
 @app.cell
-def _(avg, cur, gdf_merged, plot):
-    anom = cur - avg
+def _(anom, avg, gdf_merged, mo, plot):
     gdf_sel = gdf_merged[gdf_merged.pcode.notna()]
 
-    plot.plot_anomaly(anom, gdf_sel)
+    anom_plot = plot.plot_anomaly(anom, gdf_sel)
+    clim_plot = plot.plot_climatology(avg, gdf_sel)
+
+    mo.hstack([clim_plot, anom_plot])
     return
 
 
