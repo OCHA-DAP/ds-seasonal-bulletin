@@ -393,6 +393,12 @@ def graph_rp(
 
 
 @app.cell
+def _(ADM_LEVEL, gdf_merged):
+    gdf_merged[[f"ADM{ADM_LEVEL}_EN", "pcode", "sum_season_rp", "meets_threshold", "population"]].sort_values("sum_season_rp", ascending=False, axis=0).dropna()
+    return
+
+
+@app.cell
 def _(mo):
     mo.Html("<br><br>")
     return
