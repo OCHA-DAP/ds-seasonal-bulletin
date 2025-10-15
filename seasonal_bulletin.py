@@ -116,26 +116,33 @@ def _(
 
     if DATASET == "forecast":
         ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
-        STACK_DATES = [
-            f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
+        CLIM_DATES = [
+            f"{year}-{ISSUED_MONTH:02d}-01"
+            for year in range(CLIM_START, CLIM_END + 1)
         ]
+        CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
         title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Outlook"
         subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
     else:
         ISSUED_MONTH = None
-        STACK_DATES = [f"{year}-{month:02d}-01"
-             for year in range(CLIM_START, CLIM_END + 1)
-             for month in MONTHS]
+        CLIM_DATES = [
+            f"{year}-{month:02d}-01"
+            for year in range(CLIM_START, CLIM_END + 1)
+            for month in MONTHS
+        ]
+        # TODO - Does not handle year crossing
+        CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
         title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Overview"
         subtitle = f"#### ECMWF ERA5 Reanalysis"
     return (
         ADM_LEVEL,
+        CLIM_DATES,
+        CUR_DATES,
         DATASET,
         ISO3,
         ISSUED_MONTH,
         MONTHS,
         SEASON_YEAR,
-        STACK_DATES,
         subtitle,
         title,
     )
@@ -170,12 +177,13 @@ def imports():
     from typing import Literal, List
     import xarray as xr
     from src.datasources import codab, hapi, seas5, era5
-    from src.utils import rp_calc, plot
+    from src.utils import rp_calc, plot, precip
     import ocha_stratus as stratus
     import calendar
     import plotly.express as px
     import plotly.graph_objects as go
     from calendar import monthrange
+    from dateutil.relativedelta import relativedelta
 
     _ = load_dotenv(find_dotenv(usecwd=True))
     return (
@@ -184,9 +192,8 @@ def imports():
         datetime,
         era5,
         hapi,
-        monthrange,
-        pd,
         plot,
+        precip,
         rp_calc,
         seas5,
         stratus,
@@ -197,7 +204,7 @@ def imports():
 def cached_functions(era5, hapi, mo, seas5, stratus):
     @mo.persistent_cache
     def get_cogs(dates, gdf, dataset):
-        source = "seas5" if dataset=="forecast" else "era5"
+        source = "seas5" if dataset == "forecast" else "era5"
         return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
 
@@ -394,7 +401,15 @@ def graph_rp(
 
 @app.cell
 def _(ADM_LEVEL, gdf_merged):
-    gdf_merged[[f"ADM{ADM_LEVEL}_EN", "pcode", "sum_season_rp", "meets_threshold", "population"]].sort_values("sum_season_rp", ascending=False, axis=0).dropna()
+    gdf_merged[
+        [
+            f"ADM{ADM_LEVEL}_EN",
+            "pcode",
+            "sum_season_rp",
+            "meets_threshold",
+            "population",
+        ]
+    ].sort_values("sum_season_rp", ascending=False, axis=0).dropna()
     return
 
 
@@ -418,63 +433,46 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    anomaly_switch = mo.ui.switch(label="Display anomaly? If not previously cached, the anomaly may take several minutes to compute!", value=False)
+    anomaly_switch = mo.ui.switch(
+        label="Display anomaly? If not previously cached, the anomaly may take several minutes to compute!",
+        value=False,
+    )
     mo.callout(mo.hstack([anomaly_switch]), kind="warn")
     return (anomaly_switch,)
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
 def _(
+    CLIM_DATES,
+    CUR_DATES,
     DATASET,
-    ISSUED_MONTH,
     MONTHS,
-    SEASON_YEAR,
-    STACK_DATES,
     anomaly_switch,
     gdf,
+    gdf_merged,
     get_cogs,
     mo,
-    monthrange,
-    pd,
+    plot,
+    precip,
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
-    da = get_cogs(STACK_DATES, gdf, DATASET)
+    da_clim = get_cogs(CLIM_DATES, gdf, DATASET)
+    da_cur = get_cogs(CUR_DATES, gdf, DATASET)
 
-    # TODO: Does not handle year-crossing
-    leadtimes = [month - ISSUED_MONTH for month in MONTHS]
-    da = da.sel(leadtime=leadtimes)
-    days_in_month = monthrange(SEASON_YEAR, ISSUED_MONTH)[1]
-    da = da * days_in_month
+    da_clim_processed = precip.summarize_season(da_clim, DATASET, MONTHS)
+    da_cur_processed = precip.summarize_season(da_cur, DATASET, MONTHS)
+    da_anom = da_cur_processed - da_clim_processed
 
-    # Extract years from date coordinate
-    years = pd.to_datetime(da.date.values).year
+    gdf_sel = gdf_merged[gdf_merged.pcode.notna()]
 
-    # Add year coordinate and sum
-    da_with_year = da.assign_coords(year=("date", years))
-    da_yearly = da_with_year.groupby("year").sum(dim=["leadtime"])
-
-    # Get current and average
-    cur = da_yearly.sel(date=f"{SEASON_YEAR}-{str(ISSUED_MONTH).zfill(2)}-01")
-    avg = da_yearly.mean(dim="date")
-
-    # Compute anomaly
-    anom = cur - avg
-    return anom, avg
+    anom_plot = plot.plot_anomaly(da_anom, gdf_sel)
+    clim_plot = plot.plot_climatology(da_clim_processed, gdf_sel)
+    return anom_plot, clim_plot
 
 
 @app.cell
-def _(anom, avg, gdf_merged, mo, plot):
-    gdf_sel = gdf_merged[gdf_merged.pcode.notna()]
-
-    anom_plot = plot.plot_anomaly(anom, gdf_sel)
-    clim_plot = plot.plot_climatology(avg, gdf_sel)
-
+def _(anom_plot, clim_plot, mo):
     mo.hstack([clim_plot, anom_plot])
     return
 
