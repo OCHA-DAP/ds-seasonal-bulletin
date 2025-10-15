@@ -73,7 +73,7 @@ def _(
 
         mo.stop(
             not reanalysis_available,
-            mo.center(mo.md("Reanalysis data not available yet!")),
+            mo.center(mo.callout("Reanalysis data not available yet!", kind="danger")),
         )
 
     elif data_source_dropdown.value == "forecast":
