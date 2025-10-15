@@ -183,7 +183,6 @@ def imports():
     import plotly.express as px
     import plotly.graph_objects as go
     from calendar import monthrange
-    from dateutil.relativedelta import relativedelta
 
     _ = load_dotenv(find_dotenv(usecwd=True))
     return (
