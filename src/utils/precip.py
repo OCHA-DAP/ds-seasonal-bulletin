@@ -1,44 +1,76 @@
 import pandas as pd
-from dateutil.relativedelta import relativedelta
+import xarray as xr
+from calendar import monthrange
 
-def _reshape_forecast(da):
-    """Switch to using valid_date instead of the issued_date in the forecast data. Output should have x, y, and date coords."""
-    da_ = da.copy()
-    valid_dates = [pd.to_datetime(date) + relativedelta(months=leadtime) 
-        for date in da_.date.values 
-        for leadtime in da_.leadtime]
-
-    # Stack the date and leadtime dimensions into a single dimension
-    da_stacked = da_.stack(valid_date=('date', 'leadtime'))
-    # Replace the multi-index with the computed valid_dates
-    da_stacked = da_stacked.drop_vars(['date', 'leadtime']).assign_coords(valid_date=valid_dates)
-    # Now rename back to date
-    da_stacked = da_stacked.rename({'valid_date': 'date'})
-
-    return da_stacked
-
-def _parse_date(da):
-    """Set month and year indices instead of date"""
-    da_ = da.copy()
-    da_['year'] = ('date', da_['date'].dt.year.values)
-    da_['month'] = ('date', da_['date'].dt.month.values)
-    da_reshaped = da_.set_index(date=['year', 'month']).unstack('date')
-    return da_reshaped
-
-def summarize_season(da, dataset, months):
+def process_cogs(da_clim, da_cur, months, issued_month=None, season_year=None):
     """
-    Flatten an input xarray object to get the total seasonal 
-    precipitation, averaged across all years
+    Compute total seasonal precipitation for forecast or observational data.
+
+    Parameters
+    ----------
+    da_clim : xr.DataArray
+        Climatological/historical data.
+        - Forecasts: (date, leadtime, y, x)
+        - Observations: (date, y, x)
+    da_cur : xr.DataArray
+        Current forecast or recent observation.
+    months : list[int]
+        List of months in the target season (e.g., [10, 11, 12]).
+    issued_month : int, optional
+        Issuance month (required for forecast data).
+    season_year : int, optional
+        Year of the forecast (required for forecast data).
+
+    Returns
+    -------
+    avg : xr.DataArray
+        Climatological average total seasonal precipitation.
+    cur : xr.DataArray
+        Current total seasonal precipitation.
     """
-    if dataset == "forecast":
-        _da = _reshape_forecast(da)
+    is_forecast = "leadtime" in da_clim.dims or "leadtime" in da_cur.dims
+
+    if is_forecast:
+        if issued_month is None or season_year is None:
+            raise ValueError("issued_month and season_year are required for forecast data.")
+
+        # Map each valid month to its leadtime offset
+        leadtimes = [m - issued_month for m in months]
+        leadtimes = [lt if lt >= 0 else lt + 12 for lt in leadtimes]
+
+        # Function to aggregate forecast data
+        def _process_forecast(da):
+            da_sel = da.sel(leadtime=leadtimes)
+            days_in_month = monthrange(season_year, issued_month)[1]
+            da_weighted = da_sel * days_in_month
+            years = pd.to_datetime(da_weighted.date.values).year
+            da_with_year = da_weighted.assign_coords(year=("date", years))
+            da_yearly = da_with_year.groupby("year").sum(dim=["leadtime"])
+            return da_yearly
+
+        # Process climatology
+        da_clim_proc = _process_forecast(da_clim)
+        avg = da_clim_proc.mean(dim="date")
+
+        # Process current forecast
+        da_cur_proc = _process_forecast(da_cur)
+        cur = da_cur_proc.mean(dim="date")
+
     else:
-        _da = da
-        
-    _da['date'] = _da['date'].astype('datetime64[ns]')
-    _da = _da * _da['date'].dt.days_in_month     
-    _da = _parse_date(_da)
-    # Only get selected months
-    _da = _da.sel(month=months)
-    # Sum across all months, then take the average across all years
-    return _da.sum(dim="month").mean(dim="year")
+        # --- Observational case ---
+        def _process_obs(da):
+            da = da.copy()
+            da["date"] = pd.to_datetime(da["date"].values)
+            da_weighted = da * xr.DataArray(da["date"].dt.days_in_month, dims="date")
+            da_sel = da_weighted.sel(date=da_weighted["date"].dt.month.isin(months))
+            da_with_year = da_sel.assign_coords(year=("date", da_sel["date"].dt.year.data))
+            da_yearly = da_with_year.groupby("year").sum(dim="date")
+            return da_yearly
+
+        da_clim_proc = _process_obs(da_clim)
+        avg = da_clim_proc.mean(dim="year")
+
+        da_cur_proc = _process_obs(da_cur)
+        cur = da_cur_proc.sel(year=da_cur_proc.year.max())
+
+    return avg, cur

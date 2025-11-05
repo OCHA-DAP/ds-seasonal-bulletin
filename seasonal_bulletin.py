@@ -465,7 +465,9 @@ def _(
     CLIM_DATES,
     CUR_DATES,
     DATASET,
+    ISSUED_MONTH,
     MONTHS,
+    SEASON_YEAR,
     anomaly_switch,
     gdf,
     gdf_merged,
@@ -479,8 +481,13 @@ def _(
     da_clim = get_cogs(CLIM_DATES, gdf, DATASET)
     da_cur = get_cogs(CUR_DATES, gdf, DATASET)
 
-    da_clim_processed = precip.summarize_season(da_clim, DATASET, MONTHS)
-    da_cur_processed = precip.summarize_season(da_cur, DATASET, MONTHS)
+    da_clim_processed, da_cur_processed = precip.process_cogs(
+        da_clim=da_clim,
+        da_cur=da_cur,
+        months=MONTHS,
+        issued_month=ISSUED_MONTH,
+        season_year=SEASON_YEAR,
+    )
     da_anom = da_cur_processed - da_clim_processed
 
     gdf_sel = gdf_merged[gdf_merged.pcode.notna()]
