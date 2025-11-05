@@ -7,7 +7,9 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    return (mo,)
+    import calendar
+    from calendar import monthrange
+    return calendar, mo
 
 
 @app.cell
@@ -24,7 +26,6 @@ def inputs(mo):
     adm_level_dropdown = mo.ui.dropdown(
         options=admin_levels, value=2, label="Admin level"
     )
-    season_dropdown = mo.ui.dropdown(options=seasons, value="OND", label="Season")
     season_year_dropdown = mo.ui.dropdown(
         options=range(2020, 2027), value=2025, label="Season year"
     )
@@ -32,13 +33,24 @@ def inputs(mo):
         label="Data source", options=["forecast", "reanalysis"], value="forecast"
     )
 
+    season_range = mo.ui.range_slider(
+        start=1, 
+        stop=12, 
+        step=1, 
+        show_value=True, 
+        value=[10, 12], 
+        label="Select month range", 
+        debounce=True
+    )
+
+
     mo.hstack(
         [
             iso3_dropdown,
             adm_level_dropdown,
-            season_dropdown,
             season_year_dropdown,
             data_source_dropdown,
+            season_range
         ],
         justify="center",
     )
@@ -46,19 +58,20 @@ def inputs(mo):
         adm_level_dropdown,
         data_source_dropdown,
         iso3_dropdown,
-        season_dropdown,
+        season_range,
         season_year_dropdown,
     )
 
 
 @app.cell
-def _(
-    data_source_dropdown,
-    datetime,
-    mo,
-    season_dropdown,
-    season_year_dropdown,
-):
+def _(calendar, season_range):
+    season_months = list(range(season_range.value[0], season_range.value[1]+1))
+    season_str = ''.join(calendar.month_name[month][0] for month in season_months)
+    return season_months, season_str
+
+
+@app.cell
+def _(data_source_dropdown, datetime, mo, season_months, season_year_dropdown):
     # Check if forecast or reanalysis data is available
 
     now = datetime.now()
@@ -68,7 +81,7 @@ def _(
         # Check if the reanalysis data is available
         reanalysis_available = (
             season_year_dropdown.value,
-            season_dropdown.value[-1],
+            season_months[-1],
         ) <= (now.year, now.month - 1)
 
         mo.stop(
@@ -80,7 +93,7 @@ def _(
         # Check if forecast data is available
         forecast_available = (
             season_year_dropdown.value,
-            season_dropdown.value[0],
+            season_months[0],
         ) <= (now.year, now.month)
 
         mo.stop(
@@ -90,8 +103,16 @@ def _(
         leadtime_month_dropdown = mo.ui.dropdown(
             label="Forecast leadtime (months)", options=range(0, 7), value=1
         )
+
     mo.hstack([leadtime_month_dropdown], justify="center")
     return (leadtime_month_dropdown,)
+
+
+@app.cell
+def _(mo):
+    admin_filtering = mo.ui.switch(label="Filter to locations with bimodal seasons", value=True)
+    mo.center(admin_filtering)
+    return
 
 
 @app.cell
@@ -101,14 +122,15 @@ def _(
     data_source_dropdown,
     iso3_dropdown,
     leadtime_month_dropdown,
-    season_dropdown,
+    season_months,
+    season_str,
     season_year_dropdown,
 ):
     # INPUT PARAMETERS
     ISO3 = iso3_dropdown.value
     ADM_LEVEL = adm_level_dropdown.value
     stage = "prod"
-    MONTHS = season_dropdown.value
+    MONTHS = season_months
     SEASON_YEAR = season_year_dropdown.value
     DATASET = data_source_dropdown.value
     CLIM_START = 1993  # Follows ECMWF
@@ -121,7 +143,7 @@ def _(
             for year in range(CLIM_START, CLIM_END + 1)
         ]
         CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
-        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Outlook"
+        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
         subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
     else:
         ISSUED_MONTH = None
@@ -132,7 +154,7 @@ def _(
         ]
         # TODO - Does not handle year crossing
         CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
-        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_dropdown.selected_key} Season Overview"
+        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
         subtitle = f"#### ECMWF ERA5 Reanalysis"
     return (
         ADM_LEVEL,
@@ -176,27 +198,14 @@ def imports():
     import os
     from typing import Literal, List
     import xarray as xr
-    from src.datasources import codab, hapi, seas5, era5
+    from src.datasources import hapi, seas5, era5, codab
     from src.utils import rp_calc, plot, precip
     import ocha_stratus as stratus
-    import calendar
     import plotly.express as px
     import plotly.graph_objects as go
-    from calendar import monthrange
 
     _ = load_dotenv(find_dotenv(usecwd=True))
-    return (
-        calendar,
-        codab,
-        datetime,
-        era5,
-        hapi,
-        plot,
-        precip,
-        rp_calc,
-        seas5,
-        stratus,
-    )
+    return codab, datetime, era5, hapi, plot, precip, rp_calc, seas5, stratus
 
 
 @app.cell
@@ -278,6 +287,17 @@ def data_loading(
     df_precip = get_season_stats(ISO3, ADM_LEVEL, MONTHS, DATASET, ISSUED_MONTH)
     df_precip_processed = process_season_precip(df_precip, df_pop, DATASET)
 
+    # if admin_filtering.value:
+    #     fname = f"ds-seasonal-bulletin/harmonic_seasonality/{ISO3.lower()}_adm{ADM_LEVEL}_seasonality.csv"
+    #     try:
+    #         df_seasonality = stratus.load_csv_from_blob(fname, stage="dev")
+    #         filter_pcodes = list(df_seasonality[df_seasonality.cluster==1][f"ADM{ADM_LEVEL}_PCODE"])
+    #         df_precip_processed = df_precip_processed[
+    #             df_precip_processed.pcode.isin(filter_pcodes)
+    #         ]
+    #     except Exception as e:
+    #         print("Error reading seasonality file! Not filtering locations")
+
     # Subset to MAM/OND zones for ETH admin 2
     if (ISO3 == "ETH") and (ADM_LEVEL == 2):
         _sel_aoi = codab.subset_aoi(ISO3)
@@ -320,8 +340,8 @@ def _(mo):
 
 
 @app.cell
-def _(mo, pop, rp, season_dropdown):
-    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_dropdown.selected_key} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
+def _(mo, pop, rp, season_str):
+    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
     return
 
 
