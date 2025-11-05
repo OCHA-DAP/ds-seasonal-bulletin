@@ -22,7 +22,6 @@ def total_seasonal_precip(df):
     _df = df.copy()
     # TODO: Handle Dec - Jan crossing
     _df["season"] = _df["valid_date"].dt.year
-    # TODO: Switch from 'mean' to 'sum'
     _df["sum_month"] = _df["sum"] * _df["valid_date"].dt.days_in_month
     _df2 = (
         _df.groupby(["pcode", "season"])
