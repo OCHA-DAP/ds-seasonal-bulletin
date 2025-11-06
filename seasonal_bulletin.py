@@ -34,13 +34,13 @@ def inputs(mo):
     )
 
     season_range = mo.ui.range_slider(
-        start=1, 
-        stop=12, 
-        step=1, 
-        show_value=True, 
-        value=[10, 12], 
-        label="Select month range", 
-        debounce=True
+        start=1,
+        stop=12,
+        step=1,
+        show_value=True,
+        value=[10, 12],
+        label="Select month range",
+        debounce=True,
     )
 
 
@@ -50,7 +50,7 @@ def inputs(mo):
             adm_level_dropdown,
             season_year_dropdown,
             data_source_dropdown,
-            season_range
+            season_range,
         ],
         justify="center",
     )
@@ -65,8 +65,8 @@ def inputs(mo):
 
 @app.cell
 def _(calendar, season_range):
-    season_months = list(range(season_range.value[0], season_range.value[1]+1))
-    season_str = ''.join(calendar.month_name[month][0] for month in season_months)
+    season_months = list(range(season_range.value[0], season_range.value[1] + 1))
+    season_str = "".join(calendar.month_name[month][0] for month in season_months)
     return season_months, season_str
 
 
@@ -86,7 +86,9 @@ def _(data_source_dropdown, datetime, mo, season_months, season_year_dropdown):
 
         mo.stop(
             not reanalysis_available,
-            mo.center(mo.callout("Reanalysis data not available yet!", kind="danger")),
+            mo.center(
+                mo.callout("Reanalysis data not available yet!", kind="danger")
+            ),
         )
 
     elif data_source_dropdown.value == "forecast":
@@ -110,9 +112,11 @@ def _(data_source_dropdown, datetime, mo, season_months, season_year_dropdown):
 
 @app.cell
 def _(mo):
-    admin_filtering = mo.ui.switch(label="Filter to locations with bimodal seasons", value=True)
+    admin_filtering = mo.ui.switch(
+        label="Filter to locations with bimodal seasons", value=True
+    )
     mo.center(admin_filtering)
-    return
+    return (admin_filtering,)
 
 
 @app.cell
@@ -205,7 +209,7 @@ def imports():
     import plotly.graph_objects as go
 
     _ = load_dotenv(find_dotenv(usecwd=True))
-    return codab, datetime, era5, hapi, plot, precip, rp_calc, seas5, stratus
+    return datetime, era5, hapi, plot, precip, rp_calc, seas5, stratus
 
 
 @app.cell
@@ -275,11 +279,12 @@ def data_loading(
     ISO3,
     ISSUED_MONTH,
     MONTHS,
-    codab,
+    admin_filtering,
     get_pop,
     get_season_stats,
     load_codab_from_blob,
     process_season_precip,
+    stratus,
 ):
     # GET DATA
     df_pop = get_pop(ISO3, ADM_LEVEL)
@@ -287,24 +292,27 @@ def data_loading(
     df_precip = get_season_stats(ISO3, ADM_LEVEL, MONTHS, DATASET, ISSUED_MONTH)
     df_precip_processed = process_season_precip(df_precip, df_pop, DATASET)
 
-    # if admin_filtering.value:
-    #     fname = f"ds-seasonal-bulletin/harmonic_seasonality/{ISO3.lower()}_adm{ADM_LEVEL}_seasonality.csv"
-    #     try:
-    #         df_seasonality = stratus.load_csv_from_blob(fname, stage="dev")
-    #         filter_pcodes = list(df_seasonality[df_seasonality.cluster==1][f"ADM{ADM_LEVEL}_PCODE"])
-    #         df_precip_processed = df_precip_processed[
-    #             df_precip_processed.pcode.isin(filter_pcodes)
-    #         ]
-    #     except Exception as e:
-    #         print("Error reading seasonality file! Not filtering locations")
-
-    # Subset to MAM/OND zones for ETH admin 2
-    if (ISO3 == "ETH") and (ADM_LEVEL == 2):
-        _sel_aoi = codab.subset_aoi(ISO3)
-        df_precip_processed = df_precip_processed[
-            df_precip_processed.pcode.isin(_sel_aoi)
-        ]
+    if admin_filtering.value:
+        fname = f"ds-seasonal-bulletin/harmonic_seasonality/{ISO3.lower()}_adm{ADM_LEVEL}_seasonality.csv"
+        try:
+            df_seasonality = stratus.load_csv_from_blob(fname, stage="dev")
+            filter_pcodes = list(
+                df_seasonality[df_seasonality.cluster == 1][
+                    f"ADM{ADM_LEVEL}_PCODE"
+                ]
+            )
+            df_precip_processed = df_precip_processed[
+                df_precip_processed.pcode.isin(filter_pcodes)
+            ]
+        except Exception as e:
+            print("Error reading seasonality file! Not filtering locations")
     return df_precip_processed, gdf
+
+
+@app.cell
+def _(df_precip_processed):
+    df_precip_processed
+    return
 
 
 @app.cell
@@ -341,7 +349,9 @@ def _(mo):
 
 @app.cell
 def _(mo, pop, rp, season_str):
-    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
+    mo.md(
+        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
+    )
     return
 
 
@@ -367,7 +377,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
+    mo.md(
+        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
+    )
     return
 
 
