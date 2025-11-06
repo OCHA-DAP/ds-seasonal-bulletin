@@ -120,23 +120,31 @@ def plot_map(gdf, adm_level, variable):
 
 def plot_annual_scatter(
     df_annual_summary,
-    reference_years,
     highlight_year,
+    df_cerf_annual=None, 
 ):
 
     _df = df_annual_summary.copy()
     _df = _df[_df.season >= 2000]
 
-    # Assign colors based on year type
-    def get_color(y):
-        if y == highlight_year:
-            return TOMATO
-        elif y in reference_years:
+    if df_cerf_annual is not None:
+        _df = _df.merge(df_cerf_annual.rename(columns={'SEASON_YEAR': 'season'}), on='season', how='left')
+        _df['has_cerf'] = ~_df['Approved amount in US$'].isna()
+        # Scale size based on funding amount (you may need to adjust the scaling)
+        _df['marker_size'] = _df['Approved amount in US$'].fillna(0) / 2000000 + 8  # Base size of 8
+    else:
+        _df['has_cerf'] = False
+        _df['marker_size'] = 8
+
+    def get_color(row):
+        if row['has_cerf']: 
             return SAPPHIRE_LIGHT
+        elif row['season'] == highlight_year:
+            return TOMATO
         else:
             return SAPPHIRE
 
-    _df["point_color"] = _df["season"].apply(get_color)
+    _df["point_color"] = _df.apply(get_color, axis=1)  # Change to apply on rows
 
     # Create figure
     fig = go.Figure()
@@ -147,27 +155,41 @@ def plot_annual_scatter(
             x=_df["sum_season"],
             y=_df["pop_lower_tercile"],
             mode="markers",
-            marker=dict(color=_df["point_color"], size=8),
+            marker=dict(color=_df["point_color"], size=_df["marker_size"]),  # Add size
             showlegend=False,
             hovertemplate="Year: %{text}<br>Rainfall: %{x:,.0f} mm<br>Population affected: %{y:,.0f}<extra></extra>",
             text=_df["season"],
         )
     )
 
-    # Add labels for reference and highlight years
-    years_to_label = reference_years + [highlight_year]
-    df_labeled = _df[df_annual_summary["season"].isin(years_to_label)]
+    years_to_label = [highlight_year]
+    if df_cerf_annual is not None:
+        years_to_label.extend(_df[_df['has_cerf']]['season'].tolist())
+
+    df_labeled = _df[_df["season"].isin(years_to_label)]
+
+    # Create text with bold formatting for highlight year
+    def get_label_text(row):
+        if row['season'] == highlight_year:
+            return f"<b>{row['season']}</b>"
+        else:
+            return str(row['season'])
+
+    df_labeled_text = df_labeled.apply(get_label_text, axis=1)
+    df_labeled['y_offset'] = df_labeled['pop_lower_tercile'] + (df_labeled['pop_lower_tercile'] * 0.05)  # 5% offset
+
 
     fig.add_trace(
         go.Scatter(
             x=df_labeled["sum_season"],
-            y=df_labeled["pop_lower_tercile"],
+            y=df_labeled["y_offset"],
             mode="text",
-            text=df_labeled["season"],
+            text=df_labeled_text,
             textposition="top center",
             textfont=dict(size=12, color=df_labeled["point_color"]),
             showlegend=False,
             hoverinfo="skip",
+            cliponaxis=False,  # Allow text to extend beyond plot area
         )
     )
 

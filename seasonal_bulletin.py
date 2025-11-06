@@ -209,18 +209,18 @@ def imports():
     import plotly.graph_objects as go
 
     _ = load_dotenv(find_dotenv(usecwd=True))
-    return datetime, era5, hapi, plot, precip, rp_calc, seas5, stratus
+    return datetime, era5, hapi, pd, plot, precip, rp_calc, seas5, stratus
 
 
 @app.cell
 def cached_functions(era5, hapi, mo, seas5, stratus):
-    @mo.persistent_cache
+    @mo.cache
     def get_cogs(dates, gdf, dataset):
         source = "seas5" if dataset == "forecast" else "era5"
         return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
 
-    @mo.persistent_cache
+    @mo.cache
     def get_season_stats(
         iso3, adm_level, valid_months, dataset, issued_month=None
     ):
@@ -232,12 +232,12 @@ def cached_functions(era5, hapi, mo, seas5, stratus):
             return era5.get_season_stats(iso3, adm_level, valid_months)
 
 
-    @mo.persistent_cache
+    @mo.cache
     def load_codab_from_blob(iso3, adm_level):
         return stratus.codab.load_codab_from_blob(iso3, adm_level)
 
 
-    @mo.persistent_cache
+    @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
     return get_cogs, get_pop, get_season_stats, load_codab_from_blob
@@ -310,12 +310,6 @@ def data_loading(
 
 
 @app.cell
-def _(df_precip_processed):
-    df_precip_processed
-    return
-
-
-@app.cell
 def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed, rp_calc):
     # Get return periods on population exposed per season
     _df = (
@@ -323,16 +317,16 @@ def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed, rp_calc):
         .sum()
         .reset_index()
     )
-    df_annual_sum_seas5 = rp_calc.calculate_one_group_rp(
+    df_annual_sum_precip = rp_calc.calculate_one_group_rp(
         _df, "pop_lower_tercile", ascending=False
     )
-    rp = df_annual_sum_seas5.loc[df_annual_sum_seas5["season"] == SEASON_YEAR][
+    rp = df_annual_sum_precip.loc[df_annual_sum_precip["season"] == SEASON_YEAR][
         "pop_lower_tercile_rp"
     ].values[0]
-    pop = df_annual_sum_seas5.loc[df_annual_sum_seas5["season"] == SEASON_YEAR][
+    pop = df_annual_sum_precip.loc[df_annual_sum_precip["season"] == SEASON_YEAR][
         "pop_lower_tercile"
     ].values[0]
-    return df_annual_sum_seas5, pop, rp
+    return df_annual_sum_precip, pop, rp
 
 
 @app.cell
@@ -349,16 +343,28 @@ def _(mo):
 
 @app.cell
 def _(mo, pop, rp, season_str):
-    mo.md(
-        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
-    )
+    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
     return
 
 
 @app.cell
-def graph_scatter(SEASON_YEAR, df_annual_sum_seas5, plot):
+def graph_scatter(
+    SEASON_YEAR,
+    df_annual_sum_precip,
+    iso3_dropdown,
+    pd,
+    plot,
+    stratus,
+):
+    df_cerf_annual = None
+    if iso3_dropdown.value == "ETH":
+        df_cerf = stratus.load_csv_from_blob("ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv")
+        df_cerf = df_cerf[df_cerf.Season.str.contains("OND")]
+        df_cerf["Approved amount in US$"] = pd.to_numeric(df_cerf["Approved amount in US$"].str.replace(',', ''), errors='coerce')
+        df_cerf_annual = df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
+
     plot.plot_annual_scatter(
-        df_annual_sum_seas5, list(range(2020, 2025)), SEASON_YEAR
+        df_annual_sum_precip, SEASON_YEAR, df_cerf_annual
     )
     return
 
@@ -377,9 +383,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
-    )
+    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
     return
 
 
