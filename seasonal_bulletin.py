@@ -1,16 +1,51 @@
 import marimo
 
-__generated_with = "0.15.2"
+__generated_with = "0.18.1"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
-    import marimo as mo
     import calendar
+    from typing import List
     from calendar import monthrange
 
-    return calendar, mo
+    import duckdb
+    import marimo as mo
+    import matplotlib.patches as mpatches
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import ocha_stratus as stratus
+    import pandas as pd
+
+    import pandas as pd
+    import numpy as np
+    from dotenv import load_dotenv, find_dotenv
+    from datetime import datetime
+    import requests
+    import os
+    from typing import Literal, List
+    import xarray as xr
+    from src.datasources import hapi, seas5, era5, codab
+    from src.utils import rp_calc, plot, precip
+    import ocha_stratus as stratus
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    _ = load_dotenv(find_dotenv(usecwd=True))
+    return (
+        calendar,
+        datetime,
+        era5,
+        hapi,
+        mo,
+        pd,
+        plot,
+        precip,
+        rp_calc,
+        seas5,
+        stratus,
+    )
 
 
 @app.cell
@@ -192,26 +227,6 @@ def _(mo, subtitle):
 
 
 @app.cell
-def imports():
-    import pandas as pd
-    import numpy as np
-    from dotenv import load_dotenv, find_dotenv
-    from datetime import datetime
-    import requests
-    import os
-    from typing import Literal, List
-    import xarray as xr
-    from src.datasources import hapi, seas5, era5, codab
-    from src.utils import rp_calc, plot, precip
-    import ocha_stratus as stratus
-    import plotly.express as px
-    import plotly.graph_objects as go
-
-    _ = load_dotenv(find_dotenv(usecwd=True))
-    return datetime, era5, hapi, pd, plot, precip, rp_calc, seas5, stratus
-
-
-@app.cell
 def cached_functions(era5, hapi, mo, seas5, stratus):
     @mo.cache
     def get_cogs(dates, gdf, dataset):
@@ -232,7 +247,6 @@ def cached_functions(era5, hapi, mo, seas5, stratus):
     @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
-
     return get_cogs, get_pop, get_season_stats, load_codab_from_blob
 
 
@@ -259,7 +273,6 @@ def _(ADM_LEVEL, era5, rp_calc, seas5):
         _df = rp_calc.classify_groups_quantile(_df, q=0.33, column="sum_season")
         _df = rp_calc.calculate_groups_rp(_df, "pcode", "sum_season")
         return lower_tercile_pop(_df, df_pop, ADM_LEVEL)
-
     return (process_season_precip,)
 
 
@@ -320,7 +333,9 @@ def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed, rp_calc):
 
 @app.cell
 def _(mo):
-    mo.md(r"""## Total population impacted""")
+    mo.md(r"""
+    ## Total population impacted
+    """)
     return
 
 
@@ -332,9 +347,9 @@ def _(mo):
 
 @app.cell
 def _(mo, pop, rp, season_str):
-    mo.md(
-        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
-    )
+    mo.md(f"""
+    **{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.
+    """)
     return
 
 
@@ -366,7 +381,9 @@ def graph_scatter(
 
 @app.cell
 def _(mo):
-    mo.md(r"""## Return periods of rainfall per admin level""")
+    mo.md(r"""
+    ## Return periods of rainfall per admin level
+    """)
     return
 
 
@@ -378,9 +395,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
-    )
+    mo.md(r"""
+    The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.
+    """)
     return
 
 
@@ -453,7 +470,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""## Gridded rainfall anomaly""")
+    mo.md(r"""
+    ## Gridded rainfall anomaly
+    """)
     return
 
 
@@ -513,6 +532,16 @@ def _(
 @app.cell
 def _(anom_plot, clim_plot, mo):
     mo.hstack([clim_plot, anom_plot])
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
     return
 
 
