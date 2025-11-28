@@ -18,6 +18,7 @@ def get_season_stats(iso3, adm_level, valid_months, stage="prod"):
         )
     return df
 
+
 def total_seasonal_precip(df):
     _df = df.copy()
     # TODO: Handle Dec - Jan crossing

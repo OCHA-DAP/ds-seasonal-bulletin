@@ -9,6 +9,7 @@ def _():
     import marimo as mo
     import calendar
     from calendar import monthrange
+
     return calendar, mo
 
 
@@ -42,7 +43,6 @@ def inputs(mo):
         label="Select month range",
         debounce=True,
     )
-
 
     mo.hstack(
         [
@@ -86,9 +86,7 @@ def _(data_source_dropdown, datetime, mo, season_months, season_year_dropdown):
 
         mo.stop(
             not reanalysis_available,
-            mo.center(
-                mo.callout("Reanalysis data not available yet!", kind="danger")
-            ),
+            mo.center(mo.callout("Reanalysis data not available yet!", kind="danger")),
         )
 
     elif data_source_dropdown.value == "forecast":
@@ -143,11 +141,12 @@ def _(
     if DATASET == "forecast":
         ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
         CLIM_DATES = [
-            f"{year}-{ISSUED_MONTH:02d}-01"
-            for year in range(CLIM_START, CLIM_END + 1)
+            f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
         ]
         CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
-        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
+        title = (
+            f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
+        )
         subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
     else:
         ISSUED_MONTH = None
@@ -219,27 +218,21 @@ def cached_functions(era5, hapi, mo, seas5, stratus):
         source = "seas5" if dataset == "forecast" else "era5"
         return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
-
     @mo.cache
-    def get_season_stats(
-        iso3, adm_level, valid_months, dataset, issued_month=None
-    ):
+    def get_season_stats(iso3, adm_level, valid_months, dataset, issued_month=None):
         if dataset == "forecast":
-            return seas5.get_season_stats(
-                iso3, adm_level, issued_month, valid_months
-            )
+            return seas5.get_season_stats(iso3, adm_level, issued_month, valid_months)
         elif dataset == "reanalysis":
             return era5.get_season_stats(iso3, adm_level, valid_months)
-
 
     @mo.cache
     def load_codab_from_blob(iso3, adm_level):
         return stratus.codab.load_codab_from_blob(iso3, adm_level)
 
-
     @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
+
     return get_cogs, get_pop, get_season_stats, load_codab_from_blob
 
 
@@ -248,9 +241,7 @@ def _(ADM_LEVEL, era5, rp_calc, seas5):
     # Merge in the population and identify cases where people are in the lower tercile
     def lower_tercile_pop(df, df_pop, adm_level):
         _df = df.merge(
-            df_pop[
-                ["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]
-            ],
+            df_pop[["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]],
             left_on="pcode",
             right_on=f"admin{adm_level}_code",
         )
@@ -258,7 +249,6 @@ def _(ADM_LEVEL, era5, rp_calc, seas5):
             lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
         )
         return _df
-
 
     def process_season_precip(df_precip, df_pop, dataset):
         if dataset == "forecast":
@@ -269,6 +259,7 @@ def _(ADM_LEVEL, era5, rp_calc, seas5):
         _df = rp_calc.classify_groups_quantile(_df, q=0.33, column="sum_season")
         _df = rp_calc.calculate_groups_rp(_df, "pcode", "sum_season")
         return lower_tercile_pop(_df, df_pop, ADM_LEVEL)
+
     return (process_season_precip,)
 
 
@@ -297,9 +288,7 @@ def data_loading(
         try:
             df_seasonality = stratus.load_csv_from_blob(fname, stage="dev")
             filter_pcodes = list(
-                df_seasonality[df_seasonality.cluster == 1][
-                    f"ADM{ADM_LEVEL}_PCODE"
-                ]
+                df_seasonality[df_seasonality.cluster == 1][f"ADM{ADM_LEVEL}_PCODE"]
             )
             df_precip_processed = df_precip_processed[
                 df_precip_processed.pcode.isin(filter_pcodes)
@@ -343,7 +332,9 @@ def _(mo):
 
 @app.cell
 def _(mo, pop, rp, season_str):
-    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
+    mo.md(
+        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
+    )
     return
 
 
@@ -358,14 +349,18 @@ def graph_scatter(
 ):
     df_cerf_annual = None
     if iso3_dropdown.value == "ETH":
-        df_cerf = stratus.load_csv_from_blob("ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv")
+        df_cerf = stratus.load_csv_from_blob(
+            "ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv"
+        )
         df_cerf = df_cerf[df_cerf.Season.str.contains("OND")]
-        df_cerf["Approved amount in US$"] = pd.to_numeric(df_cerf["Approved amount in US$"].str.replace(',', ''), errors='coerce')
-        df_cerf_annual = df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
+        df_cerf["Approved amount in US$"] = pd.to_numeric(
+            df_cerf["Approved amount in US$"].str.replace(",", ""), errors="coerce"
+        )
+        df_cerf_annual = (
+            df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
+        )
 
-    plot.plot_annual_scatter(
-        df_annual_sum_precip, SEASON_YEAR, df_cerf_annual
-    )
+    plot.plot_annual_scatter(df_annual_sum_precip, SEASON_YEAR, df_cerf_annual)
     return
 
 
@@ -383,7 +378,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
+    mo.md(
+        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
+    )
     return
 
 
