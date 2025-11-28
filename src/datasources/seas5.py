@@ -9,9 +9,9 @@ def get_season_stats(iso3, adm_level, issued_month, valid_months, stage="prod"):
     engine = stratus.get_engine(stage)
     with engine.connect() as conn:
         df = pd.read_sql(
-            f"""select * 
-            from seas5 
-            where iso3='{iso3}' 
+            f"""select *
+            from seas5
+            where iso3='{iso3}'
             and adm_level={adm_level}
             and extract(month from issued_date)={issued_month}
             and extract(month from valid_date) in ({valid_months_str})

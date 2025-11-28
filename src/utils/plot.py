@@ -51,7 +51,7 @@ def plot_map(gdf, adm_level, variable):
     )
 
     # Add red outlines with legend (only if there are lower tercile regions)
-    lower_tercile_data = gdf[gdf["meets_threshold"] == True]
+    lower_tercile_data = gdf[gdf["meets_threshold"]]
 
     if not lower_tercile_data.empty:
         first = True

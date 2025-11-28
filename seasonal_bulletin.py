@@ -5,7 +5,7 @@ app = marimo.App(width="medium")
 
 
 @app.cell
-def _():
+def imports():
     import calendar
     from datetime import datetime
 
@@ -35,7 +35,6 @@ def _():
 
 @app.cell
 def inputs(mo):
-    seasons = {"MAM": [3, 4, 5], "JJAS": [6, 7, 8, 9], "OND": [10, 11, 12]}
     countries = {"Ethiopia": "ETH", "Somalia": "SOM", "Burkina Faso": "BFA"}
     admin_levels = [1, 2]
 
@@ -151,7 +150,6 @@ def _(
     # INPUT PARAMETERS
     ISO3 = iso3_dropdown.value
     ADM_LEVEL = adm_level_dropdown.value
-    stage = "prod"
     MONTHS = season_months
     SEASON_YEAR = season_year_dropdown.value
     DATASET = data_source_dropdown.value
@@ -178,7 +176,7 @@ def _(
         # TODO - Does not handle year crossing
         CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
         title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
-        subtitle = f"#### ECMWF ERA5 Reanalysis"
+        subtitle = "#### ECMWF ERA5 Reanalysis"
     return (
         ADM_LEVEL,
         CLIM_DATES,
@@ -293,7 +291,7 @@ def data_loading(
             df_precip_processed = df_precip_processed[
                 df_precip_processed.pcode.isin(filter_pcodes)
             ]
-        except Exception as e:
+        except Exception:
             print("Error reading seasonality file! Not filtering locations")
     return df_precip_processed, gdf
 
