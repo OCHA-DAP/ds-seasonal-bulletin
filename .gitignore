@@ -9,3 +9,5 @@ __marimo__/*
 src/datasources/__pycache__/*
 src/utils/__pycache__/*
 .env
+.idea
+.python-version
