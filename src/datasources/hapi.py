@@ -1,6 +1,7 @@
-import requests
 import os
+
 import pandas as pd
+import requests
 
 
 def get_pop(iso3, adm_level):

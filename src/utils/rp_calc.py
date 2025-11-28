@@ -1,5 +1,6 @@
-import pandas as pd
 from typing import List
+
+import pandas as pd
 
 
 def calculate_one_group_rp(group, col_name: str = "q", ascending: bool = True):

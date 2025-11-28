@@ -1,6 +1,7 @@
+from calendar import monthrange
+
 import pandas as pd
 import xarray as xr
-from calendar import monthrange
 
 
 def process_cogs(da_clim, da_cur, months, issued_month=None, season_year=None):
