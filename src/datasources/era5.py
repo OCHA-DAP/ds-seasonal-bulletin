@@ -76,7 +76,7 @@ def aggregate_era5_yearly(
         .loc[lambda x: x == len(valid_months)]
         .index
     )
-    df_complete = df_monthly[df_monthly["year"].isin(complete_years)]
+    df_complete = df_monthly[df_monthly["year"].isin(complete_years)].copy()
 
     if 1 in valid_months and 12 in valid_months:
 
