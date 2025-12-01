@@ -3,11 +3,8 @@ import marimo
 __generated_with = "0.18.1"
 app = marimo.App(width="medium")
 
-
-@app.cell
-def imports():
+with app.setup:
     import calendar
-    from datetime import datetime
 
     import marimo as mo
     import matplotlib.pyplot as plt
@@ -20,122 +17,563 @@ def imports():
     from src.utils import plot, precip, rp_calc, timeseries
 
     _ = load_dotenv(find_dotenv(usecwd=True))
+
+    # load admin data
+    df_adms = pd.read_sql(
+        "SELECT pcode, name, iso3, adm_level FROM public.polygon ORDER BY name ASC",
+        stratus.get_engine(stage="prod"),
+    )
+    df_adm0 = df_adms.set_index("adm_level").loc[0]
+    df_adm1 = df_adms.set_index("adm_level").loc[1]
+    df_adm2 = df_adms.set_index("adm_level").loc[2]
+    adm0_options = {
+        row["name"]: row["pcode"]
+        for _, row in df_adm0.iterrows()
+        if row["name"] is not None
+    }
+
+    # hardcode parameters
+    disaster_type = "Flood"
+    impact_col = "Total Affected"
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(
+        r"""
+    # SEAS5 explorer
+
+    Exploration of ECMWF SEAS5 seasonal forecast.
+    """
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(
+        r"""
+    ## Parameter selection
+    """
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(
+        r"""
+    ### Administrative division
+    """
+    )
+    return
+
+
+@app.cell
+def _():
+    adm0_dropdown = mo.ui.dropdown(
+        options=adm0_options, label="Select country:", value="Ethiopia"
+    )
+    return (adm0_dropdown,)
+
+
+@app.cell
+def _(adm0_dropdown):
+    adm0_dropdown
+    return
+
+
+@app.cell
+def _():
+    adm_level_dropdown_sk = mo.ui.dropdown(
+        options=[0, 1, 2], label="Select admin level:", value=0
+    )
+    return (adm_level_dropdown_sk,)
+
+
+@app.cell
+def _(adm_level_dropdown_sk):
+    adm_level = adm_level_dropdown_sk.value
+    return (adm_level,)
+
+
+@app.cell
+def _(adm0_dropdown):
+    adm0_pcode = adm0_dropdown.value
+    adm0_name = adm0_dropdown.selected_key
+    iso3 = df_adms[df_adms["pcode"] == adm0_pcode].iloc[0]["iso3"]
+    return adm0_name, adm0_pcode, iso3
+
+
+@app.cell
+def _(iso3):
+    # load data based on iso3
+    df_emdat = emdat.load_emdat_yearly(
+        iso3=iso3, disaster_type=disaster_type, col=impact_col
+    )
+    df_cerf_sk = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
+    return df_cerf_sk, df_emdat
+
+
+@app.cell
+def _(adm0_pcode, adm_level, iso3):
+    if adm_level > 0 and adm0_pcode is not None:
+        adm1_options = {
+            row["name"]: row["pcode"]
+            for _, row in df_adm1[df_adm1["iso3"] == iso3].iterrows()
+        }
+    else:
+        adm1_options = []
+
+    adm1_dropdown = mo.ui.dropdown(
+        options=adm1_options, label="Select admin1:", value=None
+    )
+    return (adm1_dropdown,)
+
+
+@app.cell
+def _(adm1_dropdown):
+    adm1_pcode = adm1_dropdown.value
+    adm1_name = adm1_dropdown.selected_key
+    return adm1_name, adm1_pcode
+
+
+@app.cell
+def _(adm1_pcode, adm_level):
+    if adm_level > 1 and adm1_pcode is not None:
+        adm2_options = {
+            row["name"]: row["pcode"]
+            for _, row in df_adm2[
+                df_adm2["pcode"].str.startswith(adm1_pcode)
+            ].iterrows()
+        }
+        adm2_dropdown = mo.ui.dropdown(
+            options=adm2_options, label="Select admin2:", value=None
+        )
+    else:
+        adm2_dropdown = mo.ui.dropdown(options=[], label="Select admin2:", value=None)
+    return (adm2_dropdown,)
+
+
+@app.cell
+def _(adm2_dropdown):
+    adm2_pcode = adm2_dropdown.value
+    adm2_name = adm2_dropdown.selected_key
+    return adm2_name, adm2_pcode
+
+
+@app.cell
+def _(adm1_dropdown, adm2_dropdown, adm_level_dropdown_sk):
+    mo.hstack([adm_level_dropdown_sk, adm1_dropdown, adm2_dropdown])
+    return
+
+
+@app.cell
+def _(
+    adm0_name,
+    adm0_pcode,
+    adm1_name,
+    adm1_pcode,
+    adm2_name,
+    adm2_pcode,
+    adm_level,
+):
+    if adm_level == 0:
+        pcode = adm0_pcode
+        adm_name_str = adm0_name
+    elif adm_level == 1:
+        if adm1_pcode is None:
+            mo.stop("Select adm1")
+        pcode = adm1_pcode
+        adm_name_str = f"{adm1_name}, {adm0_name}"
+    elif adm_level == 2:
+        if adm2_pcode is None:
+            mo.stop("Select adm2")
+        pcode = adm2_pcode
+        adm_name_str = f"{adm2_name}, {adm1_name}, {adm0_name}"
+    return adm_name_str, pcode
+
+
+@app.cell
+def _(pcode):
+    # load data based on pcode
+    df_seas5_all = seas5.load_seas5(pcode=pcode)
+    df_era5_all = era5.load_era5(pcode=pcode)
+    return df_era5_all, df_seas5_all
+
+
+@app.cell
+def _():
+    mo.md(
+        r"""
+    ### Months
+    """
+    )
+    return
+
+
+@app.cell
+def _():
+    query = """
+    SELECT MAX(issued_date) AS latest_date
+    FROM public.seas5;
+    """
+    engine = stratus.get_engine("prod")
+    with engine.connect() as conn:
+        df_latest_issue = pd.read_sql(
+            query,
+            conn,
+        )
+    return (df_latest_issue,)
+
+
+@app.cell
+def _(df_latest_issue):
+    latest_issued_date = df_latest_issue["latest_date"].iloc[0]
+    latest_issued_month = latest_issued_date.month
+    latest_issued_year = latest_issued_date.year
+    return latest_issued_date, latest_issued_month, latest_issued_year
+
+
+@app.cell
+def _(latest_issued_month, latest_issued_year):
+    issued_month_dropdown_options = {}
+
+    for x in range(1, 13):
+        year = (
+            latest_issued_year if x <= latest_issued_month else latest_issued_year - 1
+        )
+        issued_month_dropdown_options.update({f"{calendar.month_abbr[x]} {year}": x})
+
+    issued_month_dropdown = mo.ui.dropdown(
+        options=issued_month_dropdown_options,
+        label="Issued month:",
+        value=f"{calendar.month_abbr[latest_issued_month]} {latest_issued_year}",
+    )
+    return (issued_month_dropdown,)
+
+
+@app.cell
+def _(latest_issued_date):
+    mo.md(
+        f"""
+    _Most recent forecast issue date: {latest_issued_date:%b %Y}_
+    """
+    )
+    return
+
+
+@app.cell
+def _(issued_month_dropdown):
+    issued_month_dropdown
+    return
+
+
+@app.cell
+def _(issued_month_dropdown):
+    issued_month = issued_month_dropdown.value
+    return (issued_month,)
+
+
+@app.cell
+def _():
+    valid_months_slider = mo.ui.range_slider(
+        steps=range(7), label="Leadtimes", value=(1, 3)
+    )
+    return (valid_months_slider,)
+
+
+@app.cell
+def _(issued_month, valid_months_slider):
+    valid_months = [
+        (issued_month + x - 1) % 12 + 1
+        for x in range(valid_months_slider.value[0], valid_months_slider.value[1] + 1)
+    ]
+    return (valid_months,)
+
+
+@app.cell
+def _(df_era5_all, valid_months):
+    df_era5 = era5.aggregate_era5_yearly(df_era5_all, valid_months=valid_months)
+    return (df_era5,)
+
+
+@app.cell
+def _(issued_month, valid_months):
+    if len(valid_months) < 3:
+        valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
+    else:
+        valid_mo_str = "".join([calendar.month_abbr[x][0] for x in valid_months])
+
+    issued_mo_str = calendar.month_abbr[issued_month]
+    return issued_mo_str, valid_mo_str
+
+
+@app.cell
+def _(df_seas5_all, issued_month, valid_months):
+    df_seas5_season = seas5.aggregate_seas5_yearly(
+        df_seas5_all,
+        issued_month=issued_month,
+        valid_months=valid_months,
+    )
+    if min(valid_months) < issued_month and 12 not in valid_months:
+        df_seas5_season["year"] += 1
+    return (df_seas5_season,)
+
+
+@app.cell
+def _(df_era5, df_seas5_season):
+    forecast_issued_year = df_seas5_season["year"].max()
+    show_current_forecast = forecast_issued_year not in df_era5["year"].values
+    valid_months_note = (
+        ""
+        if show_current_forecast
+        else "_reanalysis available; current forecast line will not be shown_"
+    )
+    max_index = (
+        forecast_issued_year - 1 if show_current_forecast else forecast_issued_year
+    )
+    df_seas5 = timeseries.detrend_column(
+        df_seas5_season, "mean", index_col="year", max_index=max_index
+    )
     return (
-        calendar,
-        cerf,
-        datetime,
-        emdat,
-        era5,
-        hapi,
-        mo,
-        np,
-        pd,
-        plot,
-        plt,
-        precip,
-        rp_calc,
-        seas5,
-        stratus,
-        timeseries,
+        df_seas5,
+        forecast_issued_year,
+        show_current_forecast,
+        valid_months_note,
     )
 
 
 @app.cell
-def inputs(mo):
-    countries = {"Ethiopia": "ETH", "Somalia": "SOM", "Burkina Faso": "BFA"}
-    admin_levels = [1, 2]
-
-    iso3_dropdown = mo.ui.dropdown(
-        options=countries,
-        value=list(countries.keys())[0],
-        label="Analysis location",
-    )
-    adm_level_dropdown = mo.ui.dropdown(
-        options=admin_levels, value=2, label="Admin level"
-    )
-    season_year_dropdown = mo.ui.dropdown(
-        options=range(2020, 2027), value=2025, label="Season year"
-    )
-    data_source_dropdown = mo.ui.dropdown(
-        label="Data source", options=["forecast", "reanalysis"], value="forecast"
-    )
-
-    season_range = mo.ui.range_slider(
-        start=1,
-        stop=12,
-        step=1,
-        show_value=True,
-        value=[10, 12],
-        label="Select month range",
-        debounce=True,
-    )
-
+def _(valid_mo_str, valid_months_note, valid_months_slider):
     mo.hstack(
         [
-            iso3_dropdown,
-            adm_level_dropdown,
-            season_year_dropdown,
-            data_source_dropdown,
-            season_range,
+            valid_months_slider,
+            mo.md(f"**{valid_mo_str}**"),
+            mo.md(valid_months_note),
         ],
-        justify="center",
+        justify="start",
     )
-    return (
-        adm_level_dropdown,
-        data_source_dropdown,
-        iso3_dropdown,
-        season_range,
-        season_year_dropdown,
-    )
+    return
 
 
 @app.cell
-def _(calendar, season_range):
-    season_months = list(range(season_range.value[0], season_range.value[1] + 1))
-    season_str = "".join(calendar.month_name[month][0] for month in season_months)
-    return season_months, season_str
+def _(df_cerf_sk, df_emdat, df_era5, df_seas5):
+    df_compare = (
+        df_seas5.merge(df_era5, on="year", how="outer", suffixes=("_seas5", "_era5"))
+        .merge(df_emdat, how="outer")
+        .merge(df_cerf_sk, how="outer")
+    )
+    return (df_compare,)
 
 
 @app.cell
-def _(data_source_dropdown, datetime, mo, season_months, season_year_dropdown):
+def _(df_compare):
+    df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(
+        r"""
+    ### Plot options
+    """
+    )
+    return
+
+
+@app.cell
+def _():
+    high_tercile_selector = mo.ui.checkbox(label="Upper tercile")
+    low_tercile_selector = mo.ui.checkbox(label="Lower tercile")
+    return high_tercile_selector, low_tercile_selector
+
+
+@app.cell
+def _(high_tercile_selector, low_tercile_selector):
+    mo.hstack(
+        [
+            mo.md("Show tercile boundaries:"),
+            mo.vstack([high_tercile_selector, low_tercile_selector], gap=0),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(high_tercile_selector, low_tercile_selector):
+    show_high_tercile = high_tercile_selector.value
+    show_low_tercile = low_tercile_selector.value
+    return show_high_tercile, show_low_tercile
+
+
+@app.cell
+def _(adm_level):
+    allow_impact = adm_level == 0
+    options = ["Flood"] if allow_impact else []
+
+    hazard_dropdown = mo.ui.dropdown(
+        options=options,
+        label="Display impact data: ",
+    )
+    hazard_note = "" if allow_impact else "_impact data only available for ADM0_"
+    return hazard_dropdown, hazard_note
+
+
+@app.cell
+def _(hazard_dropdown, hazard_note):
+    mo.hstack(
+        [
+            hazard_dropdown,
+            mo.md(
+                hazard_note,
+            ),
+        ],
+        justify="start",
+    )
+    return
+
+
+@app.cell
+def _(hazard_dropdown):
+    hazard = hazard_dropdown.value
+    return (hazard,)
+
+
+@app.cell
+def _():
+    min_year_selector = mo.ui.dropdown(
+        options=range(1981, 2011),
+        allow_select_none=False,
+        value=2000,
+        label="Start year: ",
+    )
+    return (min_year_selector,)
+
+
+@app.cell
+def _(min_year_selector):
+    min_year = min_year_selector.value
+    min_year_note = (
+        "_note that impact data before 2000 is not shown_" if min_year < 2000 else ""
+    )
+    return min_year, min_year_note
+
+
+@app.cell
+def _(min_year_note, min_year_selector):
+    mo.hstack([min_year_selector, mo.md(min_year_note)], justify="start")
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(
+        r"""
+    ## Population exposed
+    """
+    )
+    return
+
+
+@app.cell
+def inputs():
+    # countries = {"Ethiopia": "ETH", "Somalia": "SOM", "Burkina Faso": "BFA"}
+    # admin_levels = [1, 2]
+
+    # iso3_dropdown = mo.ui.dropdown(
+    #     options=countries,
+    #     value=list(countries.keys())[0],
+    #     label="Analysis location",
+    # )
+    # adm_level_dropdown = mo.ui.dropdown(
+    #     options=admin_levels, value=2, label="Admin level"
+    # )
+    # season_year_dropdown = mo.ui.dropdown(
+    #     options=range(2020, 2027), value=2025, label="Season year"
+    # )
+    # data_source_dropdown = mo.ui.dropdown(
+    #     label="Data source", options=["forecast", "reanalysis"], value="forecast"
+    # )
+
+    # season_range = mo.ui.range_slider(
+    #     start=1,
+    #     stop=12,
+    #     step=1,
+    #     show_value=True,
+    #     value=[10, 12],
+    #     label="Select month range",
+    #     debounce=True,
+    # )
+
+    # mo.hstack(
+    #     [
+    #         iso3_dropdown,
+    #         adm_level_dropdown,
+    #         season_year_dropdown,
+    #         data_source_dropdown,
+    #         season_range,
+    #     ],
+    #     justify="center",
+    # )
+    return
+
+
+@app.cell
+def _(show_current_forecast):
+    show_current_forecast
+    return
+
+
+@app.cell
+def _(MONTHS):
+
+    season_str = "".join(calendar.month_name[month][0] for month in MONTHS)
+    return (season_str,)
+
+
+@app.cell
+def _():
     # Check if forecast or reanalysis data is available
 
-    now = datetime.now()
-    leadtime_month_dropdown = None
+    # now = datetime.now()
+    # leadtime_month_dropdown = None
 
-    if data_source_dropdown.value == "reanalysis":
-        # Check if the reanalysis data is available
-        reanalysis_available = (
-            season_year_dropdown.value,
-            season_months[-1],
-        ) <= (now.year, now.month - 1)
+    # if data_source_dropdown.value == "reanalysis":
+    #     # Check if the reanalysis data is available
+    #     reanalysis_available = (
+    #         season_year_dropdown.value,
+    #         season_months[-1],
+    #     ) <= (now.year, now.month - 1)
 
-        mo.stop(
-            not reanalysis_available,
-            mo.center(mo.callout("Reanalysis data not available yet!", kind="danger")),
-        )
+    #     mo.stop(
+    #         not reanalysis_available,
+    #         mo.center(mo.callout("Reanalysis data not available yet!", kind="danger")),
+    #     )
 
-    elif data_source_dropdown.value == "forecast":
-        # Check if forecast data is available
-        forecast_available = (
-            season_year_dropdown.value,
-            season_months[0],
-        ) <= (now.year, now.month)
+    # elif data_source_dropdown.value == "forecast":
+    #     # Check if forecast data is available
+    #     forecast_available = (
+    #         season_year_dropdown.value,
+    #         season_months[0],
+    #     ) <= (now.year, now.month)
 
-        mo.stop(
-            not forecast_available,
-            mo.center(mo.md("Forecast data not available yet!")),
-        )
-        leadtime_month_dropdown = mo.ui.dropdown(
-            label="Forecast leadtime (months)", options=range(0, 7), value=1
-        )
+    #     mo.stop(
+    #         not forecast_available,
+    #         mo.center(mo.md("Forecast data not available yet!")),
+    #     )
+    #     leadtime_month_dropdown = mo.ui.dropdown(
+    #         label="Forecast leadtime (months)", options=range(0, 7), value=1
+    #     )
 
-    mo.hstack([leadtime_month_dropdown], justify="center")
-    return (leadtime_month_dropdown,)
+    # mo.hstack([leadtime_month_dropdown], justify="center")
+    return
 
 
 @app.cell
-def _(mo):
+def _():
     admin_filtering = mo.ui.switch(
         label="Filter to locations with bimodal seasons", value=True
     )
@@ -145,79 +583,55 @@ def _(mo):
 
 @app.cell
 def _(
-    adm_level_dropdown,
-    calendar,
-    data_source_dropdown,
-    iso3_dropdown,
-    leadtime_month_dropdown,
-    season_months,
-    season_str,
-    season_year_dropdown,
+    adm_level,
+    forecast_issued_year,
+    iso3,
+    issued_month,
+    show_current_forecast,
+    valid_months,
 ):
     # INPUT PARAMETERS
-    ISO3 = iso3_dropdown.value
-    ADM_LEVEL = adm_level_dropdown.value
-    MONTHS = season_months
-    SEASON_YEAR = season_year_dropdown.value
-    DATASET = data_source_dropdown.value
-    CLIM_START = 1993  # Follows ECMWF
-    CLIM_END = 2016  # Follows ECMWF
+    # ISO3 = iso3_dropdown.value
+    ISO3 = iso3
+    # ADM_LEVEL = adm_level_dropdown.value
+    ADM_LEVEL = adm_level
+    # MONTHS = season_months
+    MONTHS = valid_months
+    # SEASON_YEAR = season_year_dropdown.value
+    SEASON_YEAR = int(forecast_issued_year)
+    # DATASET = data_source_dropdown.value
+    DATASET = "forecast" if show_current_forecast else "reanalysis"
+    # CLIM_START = 1993  # Follows ECMWF
+    # CLIM_END = 2016  # Follows ECMWF
 
-    if DATASET == "forecast":
-        ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
-        CLIM_DATES = [
-            f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
-        ]
-        CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
-        title = (
-            f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
-        )
-        subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
-    else:
-        ISSUED_MONTH = None
-        CLIM_DATES = [
-            f"{year}-{month:02d}-01"
-            for year in range(CLIM_START, CLIM_END + 1)
-            for month in MONTHS
-        ]
-        # TODO - Does not handle year crossing
-        CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
-        title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
-        subtitle = "#### ECMWF ERA5 Reanalysis"
-    return (
-        ADM_LEVEL,
-        CLIM_DATES,
-        CUR_DATES,
-        DATASET,
-        ISO3,
-        ISSUED_MONTH,
-        MONTHS,
-        SEASON_YEAR,
-        subtitle,
-        title,
-    )
+    ISSUED_MONTH = issued_month
+
+    # if DATASET == "forecast":
+    #     ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
+    #     CLIM_DATES = [
+    #         f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
+    #     ]
+    #     CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
+    #     title = (
+    #         f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
+    #     )
+    #     subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
+    # else:
+    #     ISSUED_MONTH = None
+    #     CLIM_DATES = [
+    #         f"{year}-{month:02d}-01"
+    #         for year in range(CLIM_START, CLIM_END + 1)
+    #         for month in MONTHS
+    #     ]
+    #     # TODO - Does not handle year crossing
+    #     CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
+    #     title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
+    #     subtitle = "#### ECMWF ERA5 Reanalysis"
+    return ADM_LEVEL, DATASET, ISO3, ISSUED_MONTH, MONTHS, SEASON_YEAR
 
 
 @app.cell
-def _(mo):
-    mo.Html("<hr></hr><br>")
-    return
-
-
-@app.cell
-def _(mo, title):
-    mo.center(mo.md(title))
-    return
-
-
-@app.cell
-def _(mo, subtitle):
-    mo.center(mo.md(subtitle))
-    return
-
-
-@app.cell
-def cached_functions(era5, hapi, mo, seas5, stratus):
+def cached_functions():
     @mo.cache
     def get_cogs(dates, gdf, dataset):
         source = "seas5" if dataset == "forecast" else "era5"
@@ -242,7 +656,7 @@ def cached_functions(era5, hapi, mo, seas5, stratus):
 
 
 @app.cell
-def _(ADM_LEVEL, era5, rp_calc, seas5):
+def _(ADM_LEVEL):
     # Merge in the population and identify cases where people are in the lower tercile
     def lower_tercile_pop(df, df_pop, adm_level):
         _df = df.merge(
@@ -269,6 +683,12 @@ def _(ADM_LEVEL, era5, rp_calc, seas5):
 
 
 @app.cell
+def _(df_pop):
+    df_pop
+    return
+
+
+@app.cell
 def data_loading(
     ADM_LEVEL,
     DATASET,
@@ -280,7 +700,6 @@ def data_loading(
     get_season_stats,
     load_codab_from_blob,
     process_season_precip,
-    stratus,
 ):
     # GET DATA
     df_pop = get_pop(ISO3, ADM_LEVEL)
@@ -298,13 +717,14 @@ def data_loading(
             df_precip_processed = df_precip_processed[
                 df_precip_processed.pcode.isin(filter_pcodes)
             ]
-        except Exception:
+        except Exception as e:
+            print(e)
             print("Error reading seasonality file! Not filtering locations")
-    return df_precip_processed, gdf
+    return df_pop, df_precip_processed, gdf
 
 
 @app.cell
-def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed, rp_calc):
+def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed):
     # Get return periods on population exposed per season
     _df = (
         df_precip_processed.groupby("season")[["sum_season", "pop_lower_tercile"]]
@@ -324,23 +744,7 @@ def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed, rp_calc):
 
 
 @app.cell
-def _(mo):
-    mo.md(
-        r"""
-    ## Total population impacted
-    """
-    )
-    return
-
-
-@app.cell
-def _(mo):
-    mo.Html("<hr></hr>")
-    return
-
-
-@app.cell
-def _(mo, pop, rp, season_str):
+def _(pop, rp, season_str):
     mo.md(
         f"""
     **{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.
@@ -350,16 +754,9 @@ def _(mo, pop, rp, season_str):
 
 
 @app.cell
-def graph_scatter(
-    SEASON_YEAR,
-    df_annual_sum_precip,
-    iso3_dropdown,
-    pd,
-    plot,
-    stratus,
-):
+def graph_scatter(ISO3, SEASON_YEAR, df_annual_sum_precip):
     df_cerf_annual = None
-    if iso3_dropdown.value == "ETH":
+    if ISO3 == "ETH":
         df_cerf = stratus.load_csv_from_blob(
             "ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv"
         )
@@ -376,7 +773,7 @@ def graph_scatter(
 
 
 @app.cell
-def _(mo):
+def _():
     mo.md(
         r"""
     ## Return periods of rainfall per admin level
@@ -386,13 +783,13 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _():
     mo.Html("<hr></hr>")
     return
 
 
 @app.cell
-def _(mo):
+def _():
     mo.md(
         r"""
     The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.
@@ -402,7 +799,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _():
     map_variable = mo.ui.radio(
         options=["population", "sum_season_rp"],
         label="Select variable to display:",
@@ -414,14 +811,7 @@ def _(mo):
 
 
 @app.cell
-def graph_rp(
-    ADM_LEVEL,
-    SEASON_YEAR,
-    df_precip_processed,
-    gdf,
-    map_variable,
-    plot,
-):
+def graph_rp(ADM_LEVEL, SEASON_YEAR, df_precip_processed, gdf, map_variable):
     # Prep and plot geodata on map for current return periods
     _df = df_precip_processed[df_precip_processed.season == SEASON_YEAR]
     gdf_merged = gdf.merge(
@@ -463,13 +853,13 @@ def _(ADM_LEVEL, gdf_merged):
 
 
 @app.cell
-def _(mo):
+def _():
     mo.Html("<br><br>")
     return
 
 
 @app.cell
-def _(mo):
+def _():
     mo.md(
         r"""
     ## Gridded rainfall anomaly
@@ -479,13 +869,13 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _():
     mo.Html("<hr></hr>")
     return
 
 
 @app.cell
-def _(mo):
+def _():
     anomaly_switch = mo.ui.switch(
         label="Display anomaly? If not previously cached, the anomaly may take several minutes to compute!",
         value=False,
@@ -506,9 +896,6 @@ def _(
     gdf,
     gdf_merged,
     get_cogs,
-    mo,
-    plot,
-    precip,
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
@@ -532,7 +919,7 @@ def _(
 
 
 @app.cell
-def _(anom_plot, clim_plot, mo):
+def _(anom_plot, clim_plot):
     mo.hstack([clim_plot, anom_plot])
     return
 
@@ -543,450 +930,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md(
-        r"""
-    # SEAS5-ERA5 skill plot
-
-    ## Set parameters
-    """
-    )
-    return
-
-
-@app.cell
 def _():
-    disaster_type = "Flood"
-    impact_col = "Total Affected"
-    return disaster_type, impact_col
-
-
-@app.cell
-def _(pd, stratus):
-    df_adms = pd.read_sql(
-        "SELECT pcode, name, iso3, adm_level FROM public.polygon ORDER BY name ASC",
-        stratus.get_engine(stage="prod"),
-    )
-    df_adm0 = df_adms.set_index("adm_level").loc[0]
-    df_adm1 = df_adms.set_index("adm_level").loc[1]
-    df_adm2 = df_adms.set_index("adm_level").loc[2]
-    adm0_options = {
-        row["name"]: row["pcode"]
-        for _, row in df_adm0.iterrows()
-        if row["name"] is not None
-    }
-    return adm0_options, df_adm1, df_adm2, df_adms
-
-
-@app.cell
-def _(adm0_options, mo):
-    adm0_dropdown = mo.ui.dropdown(
-        options=adm0_options, label="Select country:", value="Ethiopia"
-    )
-    return (adm0_dropdown,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(
-        r"""
-    ### Administrative division
-    """
-    )
-    return
-
-
-@app.cell
-def _(adm0_dropdown):
-    adm0_dropdown
-    return
-
-
-@app.cell
-def _(adm0_dropdown, df_adms):
-    adm0_pcode = adm0_dropdown.value
-    adm0_name = adm0_dropdown.selected_key
-    iso3 = df_adms[df_adms["pcode"] == adm0_pcode].iloc[0]["iso3"]
-    return adm0_name, adm0_pcode, iso3
-
-
-@app.cell
-def _(cerf, disaster_type, emdat, impact_col, iso3):
-    # load data based on iso3
-    df_emdat = emdat.load_emdat_yearly(
-        iso3=iso3, disaster_type=disaster_type, col=impact_col
-    )
-    df_cerf_sk = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
-    return df_cerf_sk, df_emdat
-
-
-@app.cell
-def _(mo):
-    adm_level_dropdown_sk = mo.ui.dropdown(
-        options=[0, 1, 2], label="Select admin level:", value=0
-    )
-    return (adm_level_dropdown_sk,)
-
-
-@app.cell
-def _(adm_level_dropdown_sk):
-    adm_level_dropdown_sk
-    return
-
-
-@app.cell
-def _(adm_level_dropdown_sk):
-    adm_level = adm_level_dropdown_sk.value
-    return (adm_level,)
-
-
-@app.cell
-def _(adm0_pcode, adm_level, df_adm1, iso3, mo):
-    if adm_level > 0 and adm0_pcode is not None:
-        adm1_options = {
-            row["name"]: row["pcode"]
-            for _, row in df_adm1[df_adm1["iso3"] == iso3].iterrows()
-        }
-    else:
-        adm1_options = []
-
-    adm1_dropdown = mo.ui.dropdown(
-        options=adm1_options, label="Select admin1:", value=None
-    )
-    adm1_dropdown
-    return (adm1_dropdown,)
-
-
-@app.cell
-def _(adm1_dropdown):
-    adm1_pcode = adm1_dropdown.value
-    adm1_name = adm1_dropdown.selected_key
-    return adm1_name, adm1_pcode
-
-
-@app.cell
-def _(adm1_pcode, adm_level, df_adm2, mo):
-    if adm_level > 1 and adm1_pcode is not None:
-        adm2_options = {
-            row["name"]: row["pcode"]
-            for _, row in df_adm2[
-                df_adm2["pcode"].str.startswith(adm1_pcode)
-            ].iterrows()
-        }
-        adm2_dropdown = mo.ui.dropdown(
-            options=adm2_options, label="Select admin2:", value=None
-        )
-    else:
-        adm2_dropdown = mo.ui.dropdown(options=[], label="Select admin2:", value=None)
-    return (adm2_dropdown,)
-
-
-@app.cell
-def _(adm2_dropdown):
-    adm2_dropdown
-    return
-
-
-@app.cell
-def _(adm2_dropdown):
-    adm2_pcode = adm2_dropdown.value
-    adm2_name = adm2_dropdown.selected_key
-    return adm2_name, adm2_pcode
-
-
-@app.cell
-def _(
-    adm0_name,
-    adm0_pcode,
-    adm1_name,
-    adm1_pcode,
-    adm2_name,
-    adm2_pcode,
-    adm_level,
-):
-    if adm_level == 0:
-        pcode = adm0_pcode
-        adm_name_str = adm0_name
-    elif adm_level == 1:
-        if adm1_pcode is None:
-            raise ValueError("adm1 not set")
-        pcode = adm1_pcode
-        adm_name_str = f"{adm1_name}, {adm0_name}"
-    elif adm_level == 2:
-        if adm2_pcode is None:
-            raise ValueError("adm2 not set")
-        pcode = adm2_pcode
-        adm_name_str = f"{adm2_name}, {adm1_name}, {adm0_name}"
-    return adm_name_str, pcode
-
-
-@app.cell
-def _(era5, pcode, seas5):
-    # load data based on pcode
-    df_seas5_all = seas5.load_seas5(pcode=pcode)
-    df_era5_all = era5.load_era5(pcode=pcode)
-    return df_era5_all, df_seas5_all
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        r"""
-    ### Months
-    """
-    )
-    return
-
-
-@app.cell
-def _(pd, stratus):
-    query = """
-    SELECT MAX(issued_date) AS latest_date
-    FROM public.seas5;
-    """
-    engine = stratus.get_engine("prod")
-    with engine.connect() as conn:
-        df_latest_issue = pd.read_sql(
-            query,
-            conn,
-        )
-    return (df_latest_issue,)
-
-
-@app.cell
-def _(calendar, df_latest_issue):
-    latest_issued_month = df_latest_issue["latest_date"].iloc[0].month
-    latest_issued_month_str = calendar.month_abbr[latest_issued_month]
-    return (latest_issued_month_str,)
-
-
-@app.cell
-def _(calendar, latest_issued_month_str, mo):
-    issued_month_dropdown = mo.ui.dropdown(
-        options={calendar.month_abbr[x]: x for x in range(1, 13)},
-        label="Issued month:",
-        value=latest_issued_month_str,
-    )
-    return (issued_month_dropdown,)
-
-
-@app.cell
-def _(issued_month_dropdown):
-    issued_month_dropdown
-    return
-
-
-@app.cell
-def _(issued_month_dropdown):
-    issued_month = issued_month_dropdown.value
-    return (issued_month,)
-
-
-@app.cell
-def _(mo):
-    valid_months_slider = mo.ui.range_slider(
-        steps=range(7), label="Leadtimes", value=(1, 3)
-    )
-    return (valid_months_slider,)
-
-
-@app.cell
-def _(issued_month, valid_months_slider):
-    valid_months = [
-        (issued_month + x - 1) % 12 + 1
-        for x in range(valid_months_slider.value[0], valid_months_slider.value[1] + 1)
-    ]
-    if 1 in valid_months and 12 in valid_months:
-        valid_months_shift = [(x - 7) % 12 + 1 for x in valid_months]
-        valid_months_shift = sorted(valid_months_shift)
-        valid_months = [(x + 5) % 12 + 1 for x in valid_months_shift]
-    else:
-        valid_months = sorted(valid_months)
-    return (valid_months,)
-
-
-@app.cell
-def _(df_era5_all, era5, valid_months):
-    df_era5 = era5.aggregate_era5_yearly(df_era5_all, valid_months=valid_months)
-    return (df_era5,)
-
-
-@app.cell
-def _(calendar, issued_month, valid_months):
-    if len(valid_months) < 3:
-        valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
-    else:
-        valid_mo_str = "".join([calendar.month_abbr[x][0] for x in valid_months])
-
-    issued_mo_str = calendar.month_abbr[issued_month]
-    return issued_mo_str, valid_mo_str
-
-
-@app.cell
-def _(df_seas5_all, issued_month, seas5, valid_months):
-    df_seas5_season = seas5.aggregate_seas5_yearly(
-        df_seas5_all,
-        issued_month=issued_month,
-        valid_months=valid_months,
-    )
-    if min(valid_months) < issued_month and 12 not in valid_months:
-        df_seas5_season["year"] += 1
-    return (df_seas5_season,)
-
-
-@app.cell
-def _(df_seas5_season):
-    forecast_issued_year = df_seas5_season["year"].max()
-    return (forecast_issued_year,)
-
-
-@app.cell
-def _(df_seas5_season, show_current_forecast, timeseries):
-    max_year = df_seas5_season["year"].max()
-    max_index = max_year - 1 if show_current_forecast else max_year
-    df_seas5 = timeseries.detrend_column(
-        df_seas5_season, "mean", index_col="year", max_index=max_index
-    )
-    return (df_seas5,)
-
-
-@app.cell
-def _(df_era5, forecast_issued_year):
-    show_current_forecast = forecast_issued_year not in df_era5["year"].values
-    valid_months_note = (
-        ""
-        if show_current_forecast
-        else "_reanalysis available; current forecast line will not be shown_"
-    )
-    return show_current_forecast, valid_months_note
-
-
-@app.cell
-def _(mo, valid_mo_str, valid_months_note, valid_months_slider):
-    mo.hstack(
-        [
-            valid_months_slider,
-            mo.md(f"**{valid_mo_str}**"),
-            mo.md(valid_months_note),
-        ],
-        justify="start",
-    )
-    return
-
-
-@app.cell
-def _(df_cerf_sk, df_emdat, df_era5, df_seas5):
-    df_compare = (
-        df_seas5.merge(df_era5, on="year", how="outer", suffixes=("_seas5", "_era5"))
-        .merge(df_emdat, how="outer")
-        .merge(df_cerf_sk, how="outer")
-    )
-    return (df_compare,)
-
-
-@app.cell
-def _(df_compare):
-    df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(
-        r"""
-    ### Plot options
-    """
-    )
-    return
-
-
-@app.cell
-def _(mo):
-    high_tercile_selector = mo.ui.checkbox(label="Upper tercile")
-    low_tercile_selector = mo.ui.checkbox(label="Lower tercile")
-    return high_tercile_selector, low_tercile_selector
-
-
-@app.cell
-def _(high_tercile_selector, low_tercile_selector, mo):
-    mo.hstack(
-        [
-            mo.md("Show tercile boundaries:"),
-            mo.vstack([high_tercile_selector, low_tercile_selector], gap=0),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell
-def _(high_tercile_selector, low_tercile_selector):
-    show_high_tercile = high_tercile_selector.value
-    show_low_tercile = low_tercile_selector.value
-    return show_high_tercile, show_low_tercile
-
-
-@app.cell
-def _(adm_level, mo):
-    allow_impact = adm_level == 0
-    options = ["Flood"] if allow_impact else []
-
-    hazard_dropdown = mo.ui.dropdown(
-        options=options,
-        label="Display impact data: ",
-    )
-    hazard_note = "" if allow_impact else "_impact data only available for ADM0_"
-    return hazard_dropdown, hazard_note
-
-
-@app.cell
-def _(hazard_dropdown, hazard_note, mo):
-    mo.hstack(
-        [
-            hazard_dropdown,
-            mo.md(
-                hazard_note,
-            ),
-        ],
-        justify="start",
-    )
-    return
-
-
-@app.cell
-def _(hazard_dropdown):
-    hazard = hazard_dropdown.value
-    return (hazard,)
-
-
-@app.cell
-def _(mo):
-    min_year_selector = mo.ui.dropdown(
-        options=range(1981, 2011),
-        allow_select_none=False,
-        value=2000,
-        label="Start year: ",
-    )
-    return (min_year_selector,)
-
-
-@app.cell
-def _(min_year_selector):
-    min_year = min_year_selector.value
-    min_year_note = (
-        "_note that impact data before 2000 is not shown_" if min_year < 2000 else ""
-    )
-    return min_year, min_year_note
-
-
-@app.cell
-def _(min_year_note, min_year_selector, mo):
-    mo.hstack([min_year_selector, mo.md(min_year_note)], justify="start")
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
     mo.md(
         r"""
     ## Plot
@@ -1005,7 +949,7 @@ def _():
 
 
 @app.cell
-def _(np):
+def _():
     tercile_colors = {"upper": "royalblue", "lower": "chocolate"}
     current_color = "mediumorchid"
     cerf_color_mapping = {
@@ -1023,8 +967,6 @@ def _(
     col_to_label,
     current_color,
     mpatches,
-    np,
-    plt,
     tercile_colors,
 ):
     def plot_comparison(
@@ -1311,7 +1253,7 @@ def _(df_compare, min_year):
 
 
 @app.cell
-def _(df_compare, df_ref, np, rp_calc, show_current_forecast):
+def _(df_compare, df_ref, show_current_forecast):
     rps = {}
 
     if show_current_forecast:
@@ -1350,7 +1292,7 @@ def _(rps, show_current_forecast):
 
 
 @app.cell
-def _(metrics, mo, rp_table_str):
+def _(metrics, rp_table_str):
     mo.md(
         f"""
     ### Return Period
@@ -1368,7 +1310,7 @@ def _(metrics, mo, rp_table_str):
 
 
 @app.cell
-def _(mo):
+def _():
     mo.md(
         r"""
     ### Notes
@@ -1401,7 +1343,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _():
     mo.md(
         r"""
     ## Reference
@@ -1411,7 +1353,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _():
     mo.md(
         r"""
     ### Seasonal rainfall
@@ -1421,7 +1363,7 @@ def _(mo):
 
 
 @app.cell
-def _(calendar, df_era5_all):
+def _(df_era5_all):
     max_full_year = df_era5_all["valid_date"].dt.year.max() - 1
     df_era5_monthly = (
         df_era5_all[df_era5_all["valid_date"].dt.year <= max_full_year]
@@ -1436,7 +1378,7 @@ def _(calendar, df_era5_all):
 
 
 @app.cell
-def _(adm_name_str, df_era5_all, df_era5_monthly, max_full_year, plt):
+def _(adm_name_str, df_era5_all, df_era5_monthly, max_full_year):
     _fig, _ax = plt.subplots(dpi=200)
     df_era5_monthly.plot.bar(
         x="valid_month_str", y="mean", legend=False, ax=_ax, color="royalblue"
