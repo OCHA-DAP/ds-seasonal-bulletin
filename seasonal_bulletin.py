@@ -110,27 +110,31 @@ def _(iso3):
 
 
 @app.cell
-def _(iso3):
-    _query = f"""
-    SELECT adm_level, pcode, valid_date, issued_date, mean
-    FROM public.seas5
-    WHERE iso3 = '{iso3}'
-    """
-    with stratus.get_engine(stage="prod").connect() as _conn:
-        df_seas5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date", "issued_date"])
-    return (df_seas5_iso3,)
+def _():
+    # load all ISO3 SEAS5
+
+    # _query = f"""
+    # SELECT adm_level, pcode, valid_date, issued_date, mean
+    # FROM public.seas5
+    # WHERE iso3 = '{iso3}'
+    # """
+    # with stratus.get_engine(stage="prod").connect() as _conn:
+    #     df_seas5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date", "issued_date"])
+    return
 
 
 @app.cell
-def _(iso3):
-    _query = f"""
-    SELECT adm_level, pcode, valid_date, mean
-    FROM public.era5
-    WHERE iso3 = '{iso3}'
-    """
-    with stratus.get_engine(stage="prod").connect() as _conn:
-        df_era5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date"])
-    return (df_era5_iso3,)
+def _():
+    # load all ISO3 ERA5
+
+    # _query = f"""
+    # SELECT adm_level, pcode, valid_date, mean
+    # FROM public.era5
+    # WHERE iso3 = '{iso3}'
+    # """
+    # with stratus.get_engine(stage="prod").connect() as _conn:
+    #     df_era5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date"])
+    return
 
 
 @app.cell
@@ -213,13 +217,15 @@ def _(
 
 
 @app.cell
-def _(df_era5_iso3, df_seas5_iso3, pcode):
+def _(pcode):
     # load data based on pcode
-    # df_seas5_all = seas5.load_seas5(pcode=pcode)
-    # df_era5_all = era5.load_era5(pcode=pcode)
+    # querying DB
+    df_seas5_all = seas5.load_seas5(pcode=pcode)
+    df_era5_all = era5.load_era5(pcode=pcode)
 
-    df_seas5_all = df_seas5_iso3[df_seas5_iso3["pcode"] == pcode]
-    df_era5_all = df_era5_iso3[df_era5_iso3["pcode"] == pcode]
+    # taking from ISO3 df
+    # df_seas5_all = df_seas5_iso3[df_seas5_iso3["pcode"] == pcode]
+    # df_era5_all = df_era5_iso3[df_era5_iso3["pcode"] == pcode]
     return df_era5_all, df_seas5_all
 
 
@@ -535,12 +541,6 @@ def inputs():
 
 
 @app.cell
-def _(show_current_forecast):
-    show_current_forecast
-    return
-
-
-@app.cell
 def _(MONTHS):
 
     season_str = "".join(calendar.month_name[month][0] for month in MONTHS)
@@ -694,12 +694,6 @@ def _(ADM_LEVEL):
 
 
 @app.cell
-def _(df_pop):
-    df_pop
-    return
-
-
-@app.cell
 def data_loading(
     ADM_LEVEL,
     DATASET,
@@ -731,7 +725,7 @@ def data_loading(
         except Exception as e:
             print(e)
             print("Error reading seasonality file! Not filtering locations")
-    return df_pop, df_precip_processed, gdf
+    return df_precip_processed, gdf
 
 
 @app.cell
@@ -935,7 +929,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## Plot
+    ## Skill Plot
     """)
     return
 
