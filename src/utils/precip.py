@@ -1,6 +1,8 @@
+from calendar import monthrange
+
 import pandas as pd
 import xarray as xr
-from calendar import monthrange
+
 
 def process_cogs(da_clim, da_cur, months, issued_month=None, season_year=None):
     """
@@ -32,7 +34,9 @@ def process_cogs(da_clim, da_cur, months, issued_month=None, season_year=None):
 
     if is_forecast:
         if issued_month is None or season_year is None:
-            raise ValueError("issued_month and season_year are required for forecast data.")
+            raise ValueError(
+                "issued_month and season_year are required for forecast data."
+            )
 
         # Map each valid month to its leadtime offset
         leadtimes = [m - issued_month for m in months]
@@ -63,7 +67,9 @@ def process_cogs(da_clim, da_cur, months, issued_month=None, season_year=None):
             da["date"] = pd.to_datetime(da["date"].values)
             da_weighted = da * xr.DataArray(da["date"].dt.days_in_month, dims="date")
             da_sel = da_weighted.sel(date=da_weighted["date"].dt.month.isin(months))
-            da_with_year = da_sel.assign_coords(year=("date", da_sel["date"].dt.year.data))
+            da_with_year = da_sel.assign_coords(
+                year=("date", da_sel["date"].dt.year.data)
+            )
             da_yearly = da_with_year.groupby("year").sum(dim="date")
             return da_yearly
 
