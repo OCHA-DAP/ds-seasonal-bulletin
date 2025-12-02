@@ -39,33 +39,27 @@ with app.setup:
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     # SEAS5 explorer
 
     Exploration of ECMWF SEAS5 seasonal forecast.
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Parameter selection
-    """
-    )
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Administrative division
-    """
-    )
+    """)
     return
 
 
@@ -113,6 +107,30 @@ def _(iso3):
     )
     df_cerf_sk = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
     return df_cerf_sk, df_emdat
+
+
+@app.cell
+def _(iso3):
+    _query = f"""
+    SELECT adm_level, pcode, valid_date, issued_date, mean
+    FROM public.seas5
+    WHERE iso3 = '{iso3}'
+    """
+    with stratus.get_engine(stage="prod").connect() as _conn:
+        df_seas5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date", "issued_date"])
+    return (df_seas5_iso3,)
+
+
+@app.cell
+def _(iso3):
+    _query = f"""
+    SELECT adm_level, pcode, valid_date, mean
+    FROM public.era5
+    WHERE iso3 = '{iso3}'
+    """
+    with stratus.get_engine(stage="prod").connect() as _conn:
+        df_era5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date"])
+    return (df_era5_iso3,)
 
 
 @app.cell
@@ -195,34 +213,35 @@ def _(
 
 
 @app.cell
-def _(pcode):
+def _(df_era5_iso3, df_seas5_iso3, pcode):
     # load data based on pcode
-    df_seas5_all = seas5.load_seas5(pcode=pcode)
-    df_era5_all = era5.load_era5(pcode=pcode)
+    # df_seas5_all = seas5.load_seas5(pcode=pcode)
+    # df_era5_all = era5.load_era5(pcode=pcode)
+
+    df_seas5_all = df_seas5_iso3[df_seas5_iso3["pcode"] == pcode]
+    df_era5_all = df_era5_iso3[df_era5_iso3["pcode"] == pcode]
     return df_era5_all, df_seas5_all
 
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Months
-    """
-    )
+    """)
     return
 
 
 @app.cell
 def _():
-    query = """
+    _query = """
     SELECT MAX(issued_date) AS latest_date
     FROM public.seas5;
     """
-    engine = stratus.get_engine("prod")
-    with engine.connect() as conn:
+
+    with stratus.get_engine("prod").connect() as _conn:
         df_latest_issue = pd.read_sql(
-            query,
-            conn,
+            _query,
+            _conn,
         )
     return (df_latest_issue,)
 
@@ -255,11 +274,9 @@ def _(latest_issued_month, latest_issued_year):
 
 @app.cell
 def _(latest_issued_date):
-    mo.md(
-        f"""
+    mo.md(f"""
     _Most recent forecast issue date: {latest_issued_date:%b %Y}_
-    """
-    )
+    """)
     return
 
 
@@ -375,11 +392,9 @@ def _(df_compare):
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Plot options
-    """
-    )
+    """)
     return
 
 
@@ -470,11 +485,9 @@ def _(min_year_note, min_year_selector):
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Population exposed
-    """
-    )
+    """)
     return
 
 
@@ -651,7 +664,6 @@ def cached_functions():
     @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
-
     return get_cogs, get_pop, get_season_stats, load_codab_from_blob
 
 
@@ -678,7 +690,6 @@ def _(ADM_LEVEL):
         _df = rp_calc.classify_groups_quantile(_df, q=0.33, column="sum_season")
         _df = rp_calc.calculate_groups_rp(_df, "pcode", "sum_season")
         return lower_tercile_pop(_df, df_pop, ADM_LEVEL)
-
     return (process_season_precip,)
 
 
@@ -745,11 +756,9 @@ def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed):
 
 @app.cell
 def _(pop, rp, season_str):
-    mo.md(
-        f"""
+    mo.md(f"""
     **{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.
-    """
-    )
+    """)
     return
 
 
@@ -774,11 +783,9 @@ def graph_scatter(ISO3, SEASON_YEAR, df_annual_sum_precip):
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Return periods of rainfall per admin level
-    """
-    )
+    """)
     return
 
 
@@ -790,11 +797,9 @@ def _():
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.
-    """
-    )
+    """)
     return
 
 
@@ -860,11 +865,9 @@ def _():
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Gridded rainfall anomaly
-    """
-    )
+    """)
     return
 
 
@@ -931,11 +934,9 @@ def _():
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Plot
-    """
-    )
+    """)
     return
 
 
@@ -1169,7 +1170,6 @@ def _(
             # )
             # _ax.add_patch(rect)
         return (_fig, _ax)
-
     return (plot_comparison,)
 
 
@@ -1293,8 +1293,7 @@ def _(rps, show_current_forecast):
 
 @app.cell
 def _(metrics, rp_table_str):
-    mo.md(
-        f"""
+    mo.md(f"""
     ### Return Period
 
     {rp_table_str}
@@ -1304,15 +1303,13 @@ def _(metrics, rp_table_str):
     | Correlation | Upper tercile F1 | Lower tercile F1 |
     |-|-|-|
     | {metrics["corr"]:.2f} | {metrics["upper_tpr"]:.2f} | {metrics["lower_tpr"]:.2f} |
-    """
-    )
+    """)
     return
 
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Notes
 
     #### Plot
@@ -1337,28 +1334,23 @@ def _():
     - For the F1 score, values less than 0.33 are **worse than random**, because the threshold is the tercile boundary.
     - F1 scores are calculated based on predictions and observations in the respective tercile. Because tercile thresholds are set for both the forecast and the reanalysis, there will be the same number of _predicted positive_ and _positive_ years. Thus by definition the F1 score will be the same as the TPR and PPV.
     - For standard accuracy metric defitions see the table [here](https://en.wikipedia.org/wiki/Confusion_matrix).
-    """
-    )
+    """)
     return
 
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Reference
-    """
-    )
+    """)
     return
 
 
 @app.cell
 def _():
-    mo.md(
-        r"""
+    mo.md(r"""
     ### Seasonal rainfall
-    """
-    )
+    """)
     return
 
 
