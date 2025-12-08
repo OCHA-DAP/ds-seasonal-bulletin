@@ -1,7 +1,7 @@
 import marimo
 
-__generated_with = "0.18.1"
-app = marimo.App(width="medium")
+__generated_with = "0.15.2"
+app = marimo.App()
 
 with app.setup:
     import calendar
@@ -13,7 +13,7 @@ with app.setup:
     import pandas as pd
     from dotenv import find_dotenv, load_dotenv
 
-    from src.datasources import cerf, emdat, era5, hapi, seas5
+    from src.datasources import cerf, emdat, era5, hapi, seas5, codab
     from src.utils import plot, precip, rp_calc, timeseries
 
     _ = load_dotenv(find_dotenv(usecwd=True))
@@ -32,375 +32,491 @@ with app.setup:
         if row["name"] is not None
     }
 
-    # hardcode parameters
-    disaster_type = "Flood"
     impact_col = "Total Affected"
 
 
+@app.cell
+def _():
+    @mo.cache
+    def get_cogs(dates, gdf, dataset):
+        source = "seas5" if dataset == "forecast" else "era5"
+        return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
+
+    #@mo.cache
+    def get_season_stats(iso3, adm_level, valid_months, dataset, issued_month=None):
+        if dataset == "forecast":
+            df_raw = seas5.get_season_stats(iso3, adm_level, issued_month, valid_months)
+            df_processed = seas5.aggregate_seas5_yearly(df_raw, issued_month, valid_months)
+        elif dataset == "reanalysis":
+            df_raw = era5.get_season_stats(iso3, adm_level, valid_months)
+            df_processed = era5.aggregate_era5_yearly(df_raw, valid_months)
+        return df_processed
+
+    @mo.cache
+    def load_codab_from_blob(iso3, adm_level):
+        return stratus.codab.load_codab_from_blob(iso3, adm_level)
+
+    @mo.cache
+    def get_pop(iso3, adm_level):
+        return hapi.get_pop(iso3, adm_level)
+    return get_cogs, get_pop, get_season_stats, load_codab_from_blob
+
+
+@app.cell
+def _():
+    # Merge in the population and identify cases where people are in the lower tercile
+    def lower_tercile_pop(df, df_pop, adm_level):
+        _df = df.merge(
+            df_pop[["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]],
+            left_on="pcode",
+            right_on=f"admin{adm_level}_code",
+        )
+        _df["pop_lower_tercile"] = _df.apply(
+            lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
+        )
+        return _df
+
+    def process_season_precip(df_precip, df_pop, adm_level, val_col="mean"):
+        _df = df_precip.copy()
+        _df = rp_calc.classify_groups_quantile(_df, q=0.33, column=val_col)
+        _df = rp_calc.calculate_groups_rp(_df, "pcode", val_col)
+        return lower_tercile_pop(_df, df_pop, adm_level)
+    return (process_season_precip,)
+
+
 @app.cell(hide_code=True)
 def _():
-    mo.md(r"""
-    # SEAS5 explorer
+    mo.md(
+        r"""
+    # ECMWF Seasonal Bulletin
 
     Exploration of ECMWF SEAS5 seasonal forecast.
-    """)
+    """
+    )
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(r"""
-    ## Parameter selection
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Administrative division
-    """)
+    mo.md(r"""## Parameter selection""")
     return
 
 
 @app.cell
 def _():
     adm0_dropdown = mo.ui.dropdown(
-        options=adm0_options, label="Select country:", value="Ethiopia"
+        options=adm0_options, label="Country", value="Ethiopia"
     )
-    return (adm0_dropdown,)
+    adm_level_dropdown_sk = mo.ui.dropdown(
+        options=[1, 2], label="Admin level", value=1
+    )
 
-
-@app.cell
-def _(adm0_dropdown):
-    adm0_dropdown
-    return
+    mo.hstack([mo.md("**Administrative division:**"), adm0_dropdown, adm_level_dropdown_sk], justify="start")
+    return adm0_dropdown, adm_level_dropdown_sk
 
 
 @app.cell
 def _():
-    adm_level_dropdown_sk = mo.ui.dropdown(
-        options=[0, 1, 2], label="Select admin level:", value=0
+    admin_filtering = mo.ui.switch(
+        label="Filter to locations with bimodal seasons", value=True
     )
-    return (adm_level_dropdown_sk,)
+    mo.hstack([mo.md("**Administrative subsetting:**"), admin_filtering], justify="start")
+    return (admin_filtering,)
 
 
 @app.cell
-def _(adm_level_dropdown_sk):
+def _(adm0_dropdown, adm_level_dropdown_sk):
     adm_level = adm_level_dropdown_sk.value
-    return (adm_level,)
-
-
-@app.cell
-def _(adm0_dropdown):
     adm0_pcode = adm0_dropdown.value
     adm0_name = adm0_dropdown.selected_key
     iso3 = df_adms[df_adms["pcode"] == adm0_pcode].iloc[0]["iso3"]
-    return adm0_name, adm0_pcode, iso3
-
-
-@app.cell
-def _(iso3):
-    # load data based on iso3
-    df_emdat = emdat.load_emdat_yearly(
-        iso3=iso3, disaster_type=disaster_type, col=impact_col
-    )
-    df_cerf_sk = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
-    return df_cerf_sk, df_emdat
+    return adm_level, iso3
 
 
 @app.cell
 def _():
-    # load all ISO3 SEAS5
-
-    # _query = f"""
-    # SELECT adm_level, pcode, valid_date, issued_date, mean
-    # FROM public.seas5
-    # WHERE iso3 = '{iso3}'
-    # """
-    # with stratus.get_engine(stage="prod").connect() as _conn:
-    #     df_seas5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date", "issued_date"])
-    return
-
-
-@app.cell
-def _():
-    # load all ISO3 ERA5
-
-    # _query = f"""
-    # SELECT adm_level, pcode, valid_date, mean
-    # FROM public.era5
-    # WHERE iso3 = '{iso3}'
-    # """
-    # with stratus.get_engine(stage="prod").connect() as _conn:
-    #     df_era5_iso3 = pd.read_sql(_query, _conn, parse_dates=["valid_date"])
-    return
-
-
-@app.cell
-def _(adm0_pcode, adm_level, iso3):
-    if adm_level > 0 and adm0_pcode is not None:
-        adm1_options = {
-            row["name"]: row["pcode"]
-            for _, row in df_adm1[df_adm1["iso3"] == iso3].iterrows()
-        }
-    else:
-        adm1_options = []
-
-    adm1_dropdown = mo.ui.dropdown(
-        options=adm1_options, label="Select admin1:", value=None
-    )
-    return (adm1_dropdown,)
-
-
-@app.cell
-def _(adm1_dropdown):
-    adm1_pcode = adm1_dropdown.value
-    adm1_name = adm1_dropdown.selected_key
-    return adm1_name, adm1_pcode
-
-
-@app.cell
-def _(adm1_pcode, adm_level):
-    if adm_level > 1 and adm1_pcode is not None:
-        adm2_options = {
-            row["name"]: row["pcode"]
-            for _, row in df_adm2[
-                df_adm2["pcode"].str.startswith(adm1_pcode)
-            ].iterrows()
-        }
-        adm2_dropdown = mo.ui.dropdown(
-            options=adm2_options, label="Select admin2:", value=None
-        )
-    else:
-        adm2_dropdown = mo.ui.dropdown(options=[], label="Select admin2:", value=None)
-    return (adm2_dropdown,)
-
-
-@app.cell
-def _(adm2_dropdown):
-    adm2_pcode = adm2_dropdown.value
-    adm2_name = adm2_dropdown.selected_key
-    return adm2_name, adm2_pcode
-
-
-@app.cell
-def _(adm1_dropdown, adm2_dropdown, adm_level_dropdown_sk):
-    mo.hstack([adm_level_dropdown_sk, adm1_dropdown, adm2_dropdown])
-    return
-
-
-@app.cell
-def _(
-    adm0_name,
-    adm0_pcode,
-    adm1_name,
-    adm1_pcode,
-    adm2_name,
-    adm2_pcode,
-    adm_level,
-):
-    if adm_level == 0:
-        pcode = adm0_pcode
-        adm_name_str = adm0_name
-    elif adm_level == 1:
-        if adm1_pcode is None:
-            mo.stop("Select adm1")
-        pcode = adm1_pcode
-        adm_name_str = f"{adm1_name}, {adm0_name}"
-    elif adm_level == 2:
-        if adm2_pcode is None:
-            mo.stop("Select adm2")
-        pcode = adm2_pcode
-        adm_name_str = f"{adm2_name}, {adm1_name}, {adm0_name}"
-    return adm_name_str, pcode
-
-
-@app.cell
-def _(pcode):
-    # load data based on pcode
-    # querying DB
-    df_seas5_all = seas5.load_seas5(pcode=pcode)
-    df_era5_all = era5.load_era5(pcode=pcode)
-
-    # taking from ISO3 df
-    # df_seas5_all = df_seas5_iso3[df_seas5_iso3["pcode"] == pcode]
-    # df_era5_all = df_era5_iso3[df_era5_iso3["pcode"] == pcode]
-    return df_era5_all, df_seas5_all
-
-
-@app.cell
-def _():
-    mo.md(r"""
-    ### Months
-    """)
-    return
-
-
-@app.cell
-def _():
-    _query = """
-    SELECT MAX(issued_date) AS latest_date
-    FROM public.seas5;
-    """
-
-    with stratus.get_engine("prod").connect() as _conn:
-        df_latest_issue = pd.read_sql(
-            _query,
-            _conn,
-        )
-    return (df_latest_issue,)
-
-
-@app.cell
-def _(df_latest_issue):
-    latest_issued_date = df_latest_issue["latest_date"].iloc[0]
-    latest_issued_month = latest_issued_date.month
-    latest_issued_year = latest_issued_date.year
-    return latest_issued_date, latest_issued_month, latest_issued_year
-
-
-@app.cell
-def _(latest_issued_month, latest_issued_year):
-    issued_month_dropdown_options = {}
-
-    for x in range(1, 13):
-        year = (
-            latest_issued_year if x <= latest_issued_month else latest_issued_year - 1
-        )
-        issued_month_dropdown_options.update({f"{calendar.month_abbr[x]} {year}": x})
+    issued_month_dropdown_options, latest_issued_date = seas5.calculate_issued_months()
 
     issued_month_dropdown = mo.ui.dropdown(
         options=issued_month_dropdown_options,
-        label="Issued month:",
-        value=f"{calendar.month_abbr[latest_issued_month]} {latest_issued_year}",
+        label="Issued month",
+        value=f"{calendar.month_abbr[latest_issued_date.month]} {latest_issued_date.year}",
     )
-    return (issued_month_dropdown,)
+
+    valid_months_slider = mo.ui.range_slider(
+        steps=range(7), label="Leadtimes", value=(1, 3)
+    )
+    return issued_month_dropdown, valid_months_slider
 
 
 @app.cell
-def _(latest_issued_date):
-    mo.md(f"""
-    _Most recent forecast issue date: {latest_issued_date:%b %Y}_
-    """)
+def _(issued_month_dropdown, valid_mo_str, valid_months_slider):
+    mo.hstack([mo.md("**Date selection:**"), issued_month_dropdown, valid_months_slider, valid_mo_str], justify="start")
     return
-
-
-@app.cell
-def _(issued_month_dropdown):
-    issued_month_dropdown
-    return
-
-
-@app.cell
-def _(issued_month_dropdown):
-    issued_month = issued_month_dropdown.value
-    return (issued_month,)
 
 
 @app.cell
 def _():
-    valid_months_slider = mo.ui.range_slider(
-        steps=range(7), label="Leadtimes", value=(1, 3)
+    disaster_type_dropdown = mo.ui.dropdown(
+        options=["Flood", "Drought"], label="Disaster Type", value="Drought"
     )
-    return (valid_months_slider,)
+
+    mo.hstack([mo.md("**Impact data:**"), disaster_type_dropdown], justify="start")
+    return (disaster_type_dropdown,)
 
 
 @app.cell
-def _(issued_month, valid_months_slider):
+def _(disaster_type_dropdown, issued_month_dropdown, valid_months_slider):
+    issued_month = issued_month_dropdown.value
+    disaster_type = disaster_type_dropdown.value
+
     valid_months = [
         (issued_month + x - 1) % 12 + 1
         for x in range(valid_months_slider.value[0], valid_months_slider.value[1] + 1)
     ]
-    return (valid_months,)
 
-
-@app.cell
-def _(df_era5_all, valid_months):
-    df_era5 = era5.aggregate_era5_yearly(df_era5_all, valid_months=valid_months)
-    return (df_era5,)
-
-
-@app.cell
-def _(issued_month, valid_months):
     if len(valid_months) < 3:
         valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
     else:
         valid_mo_str = "".join([calendar.month_abbr[x][0] for x in valid_months])
-
-    issued_mo_str = calendar.month_abbr[issued_month]
-    return issued_mo_str, valid_mo_str
+    return disaster_type, issued_month, valid_mo_str, valid_months
 
 
 @app.cell
-def _(df_seas5_all, issued_month, valid_months):
-    df_seas5_season = seas5.aggregate_seas5_yearly(
-        df_seas5_all,
-        issued_month=issued_month,
-        valid_months=valid_months,
+def _():
+    data_switch = mo.ui.switch(
+        label="Retrieve data? Make sure your selections above are correct.",
+        value=False,
     )
-    if min(valid_months) < issued_month and 12 not in valid_months:
-        df_seas5_season["year"] += 1
-    return (df_seas5_season,)
+    mo.callout(mo.hstack([data_switch]), kind="warn")
+    return (data_switch,)
 
 
 @app.cell
-def _(df_era5, df_seas5_season):
-    forecast_issued_year = df_seas5_season["year"].max()
-    show_current_forecast = forecast_issued_year not in df_era5["year"].values
-    valid_months_note = (
-        ""
-        if show_current_forecast
-        else "_reanalysis available; current forecast line will not be shown_"
-    )
+def _(
+    adm_level,
+    data_switch,
+    disaster_type,
+    get_season_stats,
+    iso3,
+    issued_month,
+    valid_months,
+):
+    mo.stop(not data_switch.value, mo.md(""))
+
+    # --- Retrieve yearly summary stats
+    df_forecast = get_season_stats(iso3, adm_level, valid_months, "forecast", issued_month)
+    df_reanalysis = get_season_stats(iso3, adm_level, valid_months, "reanalysis")
+
+    # --- Do we want to display the forecast or just the reanalysis?
+    forecast_issued_year = df_forecast["year"].max()
+    show_current_forecast = forecast_issued_year not in df_reanalysis["year"].values
+    # valid_months_note = (
+    #     ""
+    #     if show_current_forecast
+    #     else "_reanalysis available; current forecast line will not be shown_"
+    # )
     max_index = (
         forecast_issued_year - 1 if show_current_forecast else forecast_issued_year
     )
-    df_seas5 = timeseries.detrend_column(
-        df_seas5_season, "mean", index_col="year", max_index=max_index
-    )
-    return (
-        df_seas5,
-        forecast_issued_year,
-        show_current_forecast,
-        valid_months_note,
+
+    # --- Now also detrend the forecast data
+    # TODO: Can we do this in the function??
+    df_forecast = timeseries.detrend_column(
+        df_forecast, "mean", index_col="year", max_index=max_index
     )
 
-
-@app.cell
-def _(valid_mo_str, valid_months_note, valid_months_slider):
-    mo.hstack(
-        [
-            valid_months_slider,
-            mo.md(f"**{valid_mo_str}**"),
-            mo.md(valid_months_note),
-        ],
-        justify="start",
+    # --- Load CERF and EM-DAT impact data
+    df_emdat = emdat.load_emdat_yearly(
+        iso3=iso3, disaster_type=disaster_type, col=impact_col
     )
+    # TODO: Connect to real data
+    df_cerf = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
+
+    # --- Merge the forecast and reanalysis datasets together, 
+    # --- and combine with CERF and EM-DAT impact data
+    df_compare = (
+        df_forecast.merge(df_reanalysis, on=["year", "pcode"], how="outer", suffixes=("_seas5", "_era5"))
+        .merge(df_emdat, how="outer")
+        .merge(df_cerf, how="outer")
+    )
+    df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
+    return df_compare, df_forecast, df_reanalysis, show_current_forecast
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""## Population exposed""")
     return
 
 
 @app.cell
-def _(df_cerf_sk, df_emdat, df_era5, df_seas5):
-    df_compare = (
-        df_seas5.merge(df_era5, on="year", how="outer", suffixes=("_seas5", "_era5"))
-        .merge(df_emdat, how="outer")
-        .merge(df_cerf_sk, how="outer")
-    )
-    return (df_compare,)
+def _(MONTHS):
+    season_str = "".join(calendar.month_name[month][0] for month in MONTHS)
+    return (season_str,)
 
 
 @app.cell
-def _(df_compare):
-    df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
+def _(adm_level, iso3, issued_month, show_current_forecast, valid_months):
+    # INPUT PARAMETERS
+    # ISO3 = iso3_dropdown.value
+    ISO3 = iso3
+    # ADM_LEVEL = adm_level_dropdown.value
+    ADM_LEVEL = adm_level
+    # MONTHS = season_months
+    MONTHS = valid_months
+    # SEASON_YEAR = season_year_dropdown.value
+    # SEASON_YEAR = int(forecast_issued_year)
+    # DATASET = data_source_dropdown.value
+    DATASET = "forecast" if show_current_forecast else "reanalysis"
+    # CLIM_START = 1993  # Follows ECMWF
+    # CLIM_END = 2016  # Follows ECMWF
+
+    ISSUED_MONTH = issued_month
+
+    # if DATASET == "forecast":
+    #     ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
+    #     CLIM_DATES = [
+    #         f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
+    #     ]
+    #     CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
+    #     title = (
+    #         f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
+    #     )
+    #     subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
+    # else:
+    #     ISSUED_MONTH = None
+    #     CLIM_DATES = [
+    #         f"{year}-{month:02d}-01"
+    #         for year in range(CLIM_START, CLIM_END + 1)
+    #         for month in MONTHS
+    #     ]
+    #     # TODO - Does not handle year crossing
+    #     CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
+    #     title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
+    #     subtitle = "#### ECMWF ERA5 Reanalysis"
+    return DATASET, ISSUED_MONTH, MONTHS
+
+
+@app.cell
+def _():
+    val_col = "mean"  # or, mean_detrended
+    return (val_col,)
+
+
+@app.cell
+def _(
+    adm_level,
+    admin_filtering,
+    df_forecast,
+    df_reanalysis,
+    get_pop,
+    iso3,
+    load_codab_from_blob,
+    process_season_precip,
+    show_current_forecast,
+    val_col,
+):
+    df_display = df_forecast if show_current_forecast else df_reanalysis
+    df_pop = get_pop(iso3, adm_level)
+    df_display = process_season_precip(df_display, df_pop, adm_level, val_col=val_col)
+    gdf = load_codab_from_blob(iso3, adm_level)
+
+    if admin_filtering.value:
+        df_display = codab.filter_adm(iso3, adm_level, df_display)
+    return df_display, gdf
+
+
+@app.cell
+def _(SEASON_YEAR, df_display, val_col):
+    # Get return periods on population exposed per season
+    _df = (
+        df_display.groupby("year")[[val_col, "pop_lower_tercile"]]
+        .sum()
+        .reset_index()
+    )
+    df_annual_sum_precip = rp_calc.calculate_one_group_rp(
+        _df, "pop_lower_tercile", ascending=False
+    )
+    rp = df_annual_sum_precip.loc[df_annual_sum_precip["year"] == SEASON_YEAR][
+        "pop_lower_tercile_rp"
+    ].values[0]
+    pop = df_annual_sum_precip.loc[df_annual_sum_precip["year"] == SEASON_YEAR][
+        "pop_lower_tercile"
+    ].values[0]
+    return df_annual_sum_precip, pop, rp
+
+
+@app.cell
+def _(pop, rp, season_str):
+    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
+    return
+
+
+@app.cell
+def graph_scatter(SEASON_YEAR, df_annual_sum_precip):
+    # df_cerf_annual = None
+    # if ISO3 == "ETH":
+    #     df_cerf = stratus.load_csv_from_blob(
+    #         "ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv"
+    #     )
+    #     df_cerf = df_cerf[df_cerf.Season.str.contains("OND")]
+    #     df_cerf["Approved amount in US$"] = pd.to_numeric(
+    #         df_cerf["Approved amount in US$"].str.replace(",", ""), errors="coerce"
+    #     )
+    #     df_cerf_annual = (
+    #         df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
+    #     )
+
+    plot.plot_annual_scatter(df_annual_sum_precip, SEASON_YEAR, None)
+    return
+
+
+@app.cell
+def _():
+    mo.md(r"""## Return periods of rainfall per admin level""")
+    return
+
+
+@app.cell
+def _():
+    mo.Html("<hr></hr>")
+    return
+
+
+@app.cell
+def _():
+    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
+    return
+
+
+@app.cell
+def _(val_col):
+    map_variable = mo.ui.radio(
+        options=["population", f"{val_col}_rp"],
+        label="Select variable to display:",
+        value=f"{val_col}_rp",
+        inline=True,
+    )
+    map_variable
+    return (map_variable,)
+
+
+@app.cell
+def graph_rp(adm_level, df_display, gdf, map_variable, val_col):
+    # Prep and plot geodata on map for current return periods
+    _df = df_display[df_display.year == df_display.year.max()]
+
+    gdf_merged = gdf.merge(
+        _df[["pcode", f"{val_col}_rp", "meets_threshold", "population"]],
+        left_on=f"ADM{adm_level}_PCODE",
+        right_on="pcode",
+        how="right",
+    )
+
+    gdf_merged = gdf_merged[
+        [
+            f"ADM{adm_level}_EN",
+            f"ADM{adm_level}_PCODE",
+            "pcode",
+            f"{val_col}_rp",
+            "meets_threshold",
+            "population",
+            "geometry",
+        ]
+    ]
+    # Simplify geometry for faster visualization
+    gdf_merged["geometry"] = gdf_merged["geometry"].simplify(tolerance=0.01)
+
+    plot.plot_map(gdf_merged, adm_level, map_variable.value)
+    return (gdf_merged,)
+
+
+@app.cell
+def _(adm_level, gdf_merged, val_col):
+    gdf_merged[
+        [
+            f"ADM{adm_level}_EN",
+            "pcode",
+            f"{val_col}_rp",
+            "meets_threshold",
+            "population",
+        ]
+    ].sort_values(f"{val_col}_rp", ascending=False, axis=0).dropna()
+    return
+
+
+@app.cell
+def _():
+    mo.Html("<br><br>")
+    return
+
+
+@app.cell
+def _():
+    mo.md(r"""## Gridded rainfall anomaly""")
+    return
+
+
+@app.cell
+def _():
+    mo.Html("<hr></hr>")
+    return
+
+
+@app.cell
+def _():
+    anomaly_switch = mo.ui.switch(
+        label="Display anomaly? If not previously cached, the anomaly may take several minutes to compute!",
+        value=False,
+    )
+    mo.callout(mo.hstack([anomaly_switch]), kind="warn")
+    return (anomaly_switch,)
+
+
+@app.cell
+def _(
+    CLIM_DATES,
+    CUR_DATES,
+    DATASET,
+    ISSUED_MONTH,
+    MONTHS,
+    SEASON_YEAR,
+    anomaly_switch,
+    gdf,
+    gdf_merged,
+    get_cogs,
+):
+    mo.stop(not anomaly_switch.value, mo.md(""))
+
+    da_clim = get_cogs(CLIM_DATES, gdf, DATASET)
+    da_cur = get_cogs(CUR_DATES, gdf, DATASET)
+
+    da_clim_processed, da_cur_processed = precip.process_cogs(
+        da_clim=da_clim,
+        da_cur=da_cur,
+        months=MONTHS,
+        issued_month=ISSUED_MONTH,
+        season_year=SEASON_YEAR,
+    )
+    da_anom = da_cur_processed - da_clim_processed
+
+    gdf_sel = gdf_merged[gdf_merged.pcode.notna()]
+
+    anom_plot = plot.plot_anomaly(da_anom, gdf_sel)
+    clim_plot = plot.plot_climatology(da_clim_processed, gdf_sel)
+    return anom_plot, clim_plot
+
+
+@app.cell
+def _(anom_plot, clim_plot):
+    mo.hstack([clim_plot, anom_plot])
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(r"""
-    ### Plot options
-    """)
+    mo.md(r"""## Skill Plot""")
     return
 
 
@@ -408,11 +524,7 @@ def _():
 def _():
     high_tercile_selector = mo.ui.checkbox(label="Upper tercile")
     low_tercile_selector = mo.ui.checkbox(label="Lower tercile")
-    return high_tercile_selector, low_tercile_selector
 
-
-@app.cell
-def _(high_tercile_selector, low_tercile_selector):
     mo.hstack(
         [
             mo.md("Show tercile boundaries:"),
@@ -420,6 +532,19 @@ def _(high_tercile_selector, low_tercile_selector):
         ],
         align="center",
     )
+    return high_tercile_selector, low_tercile_selector
+
+
+@app.cell
+def _(gdf_merged):
+    pcodes = dict(zip(gdf_merged["ADM2_EN"], gdf_merged["ADM2_PCODE"]))
+    pcode_dropdown = mo.ui.dropdown(options=pcodes, label="Select an admin unit")
+    return (pcode_dropdown,)
+
+
+@app.cell
+def _(pcode_dropdown):
+    pcode_dropdown
     return
 
 
@@ -480,708 +605,31 @@ def _(min_year_selector):
     min_year_note = (
         "_note that impact data before 2000 is not shown_" if min_year < 2000 else ""
     )
-    return min_year, min_year_note
+    return (min_year,)
 
 
 @app.cell
-def _(min_year_note, min_year_selector):
-    mo.hstack([min_year_selector, mo.md(min_year_note)], justify="start")
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ## Population exposed
-    """)
-    return
-
-
-@app.cell
-def inputs():
-    # countries = {"Ethiopia": "ETH", "Somalia": "SOM", "Burkina Faso": "BFA"}
-    # admin_levels = [1, 2]
-
-    # iso3_dropdown = mo.ui.dropdown(
-    #     options=countries,
-    #     value=list(countries.keys())[0],
-    #     label="Analysis location",
-    # )
-    # adm_level_dropdown = mo.ui.dropdown(
-    #     options=admin_levels, value=2, label="Admin level"
-    # )
-    # season_year_dropdown = mo.ui.dropdown(
-    #     options=range(2020, 2027), value=2025, label="Season year"
-    # )
-    # data_source_dropdown = mo.ui.dropdown(
-    #     label="Data source", options=["forecast", "reanalysis"], value="forecast"
-    # )
-
-    # season_range = mo.ui.range_slider(
-    #     start=1,
-    #     stop=12,
-    #     step=1,
-    #     show_value=True,
-    #     value=[10, 12],
-    #     label="Select month range",
-    #     debounce=True,
-    # )
-
-    # mo.hstack(
-    #     [
-    #         iso3_dropdown,
-    #         adm_level_dropdown,
-    #         season_year_dropdown,
-    #         data_source_dropdown,
-    #         season_range,
-    #     ],
-    #     justify="center",
-    # )
-    return
-
-
-@app.cell
-def _(MONTHS):
-
-    season_str = "".join(calendar.month_name[month][0] for month in MONTHS)
-    return (season_str,)
-
-
-@app.cell
-def _():
-    # Check if forecast or reanalysis data is available
-
-    # now = datetime.now()
-    # leadtime_month_dropdown = None
-
-    # if data_source_dropdown.value == "reanalysis":
-    #     # Check if the reanalysis data is available
-    #     reanalysis_available = (
-    #         season_year_dropdown.value,
-    #         season_months[-1],
-    #     ) <= (now.year, now.month - 1)
-
-    #     mo.stop(
-    #         not reanalysis_available,
-    #         mo.center(mo.callout("Reanalysis data not available yet!", kind="danger")),
-    #     )
-
-    # elif data_source_dropdown.value == "forecast":
-    #     # Check if forecast data is available
-    #     forecast_available = (
-    #         season_year_dropdown.value,
-    #         season_months[0],
-    #     ) <= (now.year, now.month)
-
-    #     mo.stop(
-    #         not forecast_available,
-    #         mo.center(mo.md("Forecast data not available yet!")),
-    #     )
-    #     leadtime_month_dropdown = mo.ui.dropdown(
-    #         label="Forecast leadtime (months)", options=range(0, 7), value=1
-    #     )
-
-    # mo.hstack([leadtime_month_dropdown], justify="center")
-    return
-
-
-@app.cell
-def _():
-    admin_filtering = mo.ui.switch(
-        label="Filter to locations with bimodal seasons", value=True
-    )
-    mo.center(admin_filtering)
-    return (admin_filtering,)
+def _(df_compare, pcode_dropdown):
+    df_compare_sel = df_compare[df_compare.pcode == pcode_dropdown.value]
+    return (df_compare_sel,)
 
 
 @app.cell
 def _(
-    adm_level,
-    forecast_issued_year,
-    iso3,
-    issued_month,
-    show_current_forecast,
-    valid_months,
-):
-    # INPUT PARAMETERS
-    # ISO3 = iso3_dropdown.value
-    ISO3 = iso3
-    # ADM_LEVEL = adm_level_dropdown.value
-    ADM_LEVEL = adm_level
-    # MONTHS = season_months
-    MONTHS = valid_months
-    # SEASON_YEAR = season_year_dropdown.value
-    SEASON_YEAR = int(forecast_issued_year)
-    # DATASET = data_source_dropdown.value
-    DATASET = "forecast" if show_current_forecast else "reanalysis"
-    # CLIM_START = 1993  # Follows ECMWF
-    # CLIM_END = 2016  # Follows ECMWF
-
-    ISSUED_MONTH = issued_month
-
-    # if DATASET == "forecast":
-    #     ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
-    #     CLIM_DATES = [
-    #         f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
-    #     ]
-    #     CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
-    #     title = (
-    #         f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
-    #     )
-    #     subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
-    # else:
-    #     ISSUED_MONTH = None
-    #     CLIM_DATES = [
-    #         f"{year}-{month:02d}-01"
-    #         for year in range(CLIM_START, CLIM_END + 1)
-    #         for month in MONTHS
-    #     ]
-    #     # TODO - Does not handle year crossing
-    #     CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
-    #     title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
-    #     subtitle = "#### ECMWF ERA5 Reanalysis"
-    return ADM_LEVEL, DATASET, ISO3, ISSUED_MONTH, MONTHS, SEASON_YEAR
-
-
-@app.cell
-def cached_functions():
-    @mo.cache
-    def get_cogs(dates, gdf, dataset):
-        source = "seas5" if dataset == "forecast" else "era5"
-        return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
-
-    @mo.cache
-    def get_season_stats(iso3, adm_level, valid_months, dataset, issued_month=None):
-        if dataset == "forecast":
-            return seas5.get_season_stats(iso3, adm_level, issued_month, valid_months)
-        elif dataset == "reanalysis":
-            return era5.get_season_stats(iso3, adm_level, valid_months)
-
-    @mo.cache
-    def load_codab_from_blob(iso3, adm_level):
-        return stratus.codab.load_codab_from_blob(iso3, adm_level)
-
-    @mo.cache
-    def get_pop(iso3, adm_level):
-        return hapi.get_pop(iso3, adm_level)
-    return get_cogs, get_pop, get_season_stats, load_codab_from_blob
-
-
-@app.cell
-def _(ADM_LEVEL):
-    # Merge in the population and identify cases where people are in the lower tercile
-    def lower_tercile_pop(df, df_pop, adm_level):
-        _df = df.merge(
-            df_pop[["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]],
-            left_on="pcode",
-            right_on=f"admin{adm_level}_code",
-        )
-        _df["pop_lower_tercile"] = _df.apply(
-            lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
-        )
-        return _df
-
-    def process_season_precip(df_precip, df_pop, dataset):
-        if dataset == "forecast":
-            _df = seas5.total_seasonal_precip(df_precip)
-        elif dataset == "reanalysis":
-            _df = era5.total_seasonal_precip(df_precip)
-
-        _df = rp_calc.classify_groups_quantile(_df, q=0.33, column="sum_season")
-        _df = rp_calc.calculate_groups_rp(_df, "pcode", "sum_season")
-        return lower_tercile_pop(_df, df_pop, ADM_LEVEL)
-    return (process_season_precip,)
-
-
-@app.cell
-def data_loading(
-    ADM_LEVEL,
-    DATASET,
-    ISO3,
-    ISSUED_MONTH,
-    MONTHS,
-    admin_filtering,
-    get_pop,
-    get_season_stats,
-    load_codab_from_blob,
-    process_season_precip,
-):
-    # GET DATA
-    df_pop = get_pop(ISO3, ADM_LEVEL)
-    gdf = load_codab_from_blob(ISO3, ADM_LEVEL)
-    df_precip = get_season_stats(ISO3, ADM_LEVEL, MONTHS, DATASET, ISSUED_MONTH)
-    df_precip_processed = process_season_precip(df_precip, df_pop, DATASET)
-
-    if admin_filtering.value:
-        fname = f"ds-seasonal-bulletin/harmonic_seasonality/{ISO3.lower()}_adm{ADM_LEVEL}_seasonality.csv"
-        try:
-            df_seasonality = stratus.load_csv_from_blob(fname, stage="dev")
-            filter_pcodes = list(
-                df_seasonality[df_seasonality.cluster == 1][f"ADM{ADM_LEVEL}_PCODE"]
-            )
-            df_precip_processed = df_precip_processed[
-                df_precip_processed.pcode.isin(filter_pcodes)
-            ]
-        except Exception as e:
-            print(e)
-            print("Error reading seasonality file! Not filtering locations")
-    return df_precip_processed, gdf
-
-
-@app.cell
-def df_annual_sum_seas5(SEASON_YEAR, df_precip_processed):
-    # Get return periods on population exposed per season
-    _df = (
-        df_precip_processed.groupby("season")[["sum_season", "pop_lower_tercile"]]
-        .sum()
-        .reset_index()
-    )
-    df_annual_sum_precip = rp_calc.calculate_one_group_rp(
-        _df, "pop_lower_tercile", ascending=False
-    )
-    rp = df_annual_sum_precip.loc[df_annual_sum_precip["season"] == SEASON_YEAR][
-        "pop_lower_tercile_rp"
-    ].values[0]
-    pop = df_annual_sum_precip.loc[df_annual_sum_precip["season"] == SEASON_YEAR][
-        "pop_lower_tercile"
-    ].values[0]
-    return df_annual_sum_precip, pop, rp
-
-
-@app.cell
-def _(pop, rp, season_str):
-    mo.md(f"""
-    **{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.
-    """)
-    return
-
-
-@app.cell
-def graph_scatter(ISO3, SEASON_YEAR, df_annual_sum_precip):
-    df_cerf_annual = None
-    if ISO3 == "ETH":
-        df_cerf = stratus.load_csv_from_blob(
-            "ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv"
-        )
-        df_cerf = df_cerf[df_cerf.Season.str.contains("OND")]
-        df_cerf["Approved amount in US$"] = pd.to_numeric(
-            df_cerf["Approved amount in US$"].str.replace(",", ""), errors="coerce"
-        )
-        df_cerf_annual = (
-            df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
-        )
-
-    plot.plot_annual_scatter(df_annual_sum_precip, SEASON_YEAR, df_cerf_annual)
-    return
-
-
-@app.cell
-def _():
-    mo.md(r"""
-    ## Return periods of rainfall per admin level
-    """)
-    return
-
-
-@app.cell
-def _():
-    mo.Html("<hr></hr>")
-    return
-
-
-@app.cell
-def _():
-    mo.md(r"""
-    The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.
-    """)
-    return
-
-
-@app.cell
-def _():
-    map_variable = mo.ui.radio(
-        options=["population", "sum_season_rp"],
-        label="Select variable to display:",
-        value="sum_season_rp",
-        inline=True,
-    )
-    map_variable
-    return (map_variable,)
-
-
-@app.cell
-def graph_rp(ADM_LEVEL, SEASON_YEAR, df_precip_processed, gdf, map_variable):
-    # Prep and plot geodata on map for current return periods
-    _df = df_precip_processed[df_precip_processed.season == SEASON_YEAR]
-    gdf_merged = gdf.merge(
-        _df[["pcode", "sum_season_rp", "meets_threshold", "population"]],
-        left_on=f"ADM{ADM_LEVEL}_PCODE",
-        right_on="pcode",
-        how="left",
-    )
-    gdf_merged = gdf_merged[
-        [
-            f"ADM{ADM_LEVEL}_EN",
-            f"ADM{ADM_LEVEL}_PCODE",
-            "pcode",
-            "sum_season_rp",
-            "meets_threshold",
-            "population",
-            "geometry",
-        ]
-    ]
-    # Simplify geometry for faster visualization
-    gdf_merged["geometry"] = gdf_merged["geometry"].simplify(tolerance=0.01)
-
-    plot.plot_map(gdf_merged, ADM_LEVEL, map_variable.value)
-    return (gdf_merged,)
-
-
-@app.cell
-def _(ADM_LEVEL, gdf_merged):
-    gdf_merged[
-        [
-            f"ADM{ADM_LEVEL}_EN",
-            "pcode",
-            "sum_season_rp",
-            "meets_threshold",
-            "population",
-        ]
-    ].sort_values("sum_season_rp", ascending=False, axis=0).dropna()
-    return
-
-
-@app.cell
-def _():
-    mo.Html("<br><br>")
-    return
-
-
-@app.cell
-def _():
-    mo.md(r"""
-    ## Gridded rainfall anomaly
-    """)
-    return
-
-
-@app.cell
-def _():
-    mo.Html("<hr></hr>")
-    return
-
-
-@app.cell
-def _():
-    anomaly_switch = mo.ui.switch(
-        label="Display anomaly? If not previously cached, the anomaly may take several minutes to compute!",
-        value=False,
-    )
-    mo.callout(mo.hstack([anomaly_switch]), kind="warn")
-    return (anomaly_switch,)
-
-
-@app.cell
-def _(
-    CLIM_DATES,
-    CUR_DATES,
-    DATASET,
-    ISSUED_MONTH,
-    MONTHS,
-    SEASON_YEAR,
-    anomaly_switch,
-    gdf,
-    gdf_merged,
-    get_cogs,
-):
-    mo.stop(not anomaly_switch.value, mo.md(""))
-
-    da_clim = get_cogs(CLIM_DATES, gdf, DATASET)
-    da_cur = get_cogs(CUR_DATES, gdf, DATASET)
-
-    da_clim_processed, da_cur_processed = precip.process_cogs(
-        da_clim=da_clim,
-        da_cur=da_cur,
-        months=MONTHS,
-        issued_month=ISSUED_MONTH,
-        season_year=SEASON_YEAR,
-    )
-    da_anom = da_cur_processed - da_clim_processed
-
-    gdf_sel = gdf_merged[gdf_merged.pcode.notna()]
-
-    anom_plot = plot.plot_anomaly(da_anom, gdf_sel)
-    clim_plot = plot.plot_climatology(da_clim_processed, gdf_sel)
-    return anom_plot, clim_plot
-
-
-@app.cell
-def _(anom_plot, clim_plot):
-    mo.hstack([clim_plot, anom_plot])
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ## Skill Plot
-    """)
-    return
-
-
-@app.cell
-def _():
-    col_to_label = {
-        "mean_detrended_seas5": "Forecasted mean daily rainfall (mm) [SEAS5]",
-        "mean_detrended_era5": "Observed mean daily rainfall (mm) [ERA5]",
-    }
-    return (col_to_label,)
-
-
-@app.cell
-def _():
-    tercile_colors = {"upper": "royalblue", "lower": "chocolate"}
-    current_color = "mediumorchid"
-    cerf_color_mapping = {
-        "Yes": "crimson",
-        "No": "k",
-        "pre-CERF": "#595959",
-        np.nan: "k",
-    }
-    return cerf_color_mapping, current_color, tercile_colors
-
-
-@app.cell(hide_code=True)
-def _(
-    cerf_color_mapping,
-    col_to_label,
-    current_color,
-    mpatches,
-    tercile_colors,
-):
-    def plot_comparison(
-        df,
-        xcol: str,
-        ycol: str,
-        colorcol: str = None,
-        sizecol: str = None,
-        rotation: int = 0,
-        min_year: int = None,
-        title: str = None,
-        show_high_tercile: bool = False,
-        show_low_tercile: bool = False,
-        show_current_forecast: bool = True,
-    ):
-        _fig, _ax = plt.subplots(dpi=200, figsize=(7, 7))
-        if min_year is not None:
-            df = df[df["year"] >= min_year]
-        df = df.copy()
-        xmax, ymax = df[[xcol, ycol]].max()
-        xmin, ymin = df[[xcol, ycol]].min()
-        padding = 0.1
-        xrange = xmax - xmin
-        yrange = ymax - ymin
-        xlim = (xmin - padding * xrange, xmax + padding * xrange)
-        ylim = (ymin - padding * yrange, ymax + padding * yrange)
-        if show_high_tercile and show_low_tercile:
-            tercile_alpha = 0.05
-        else:
-            tercile_alpha = 0.1
-
-        def show_tercile(level):
-            df_ref = df.dropna(subset=[xcol, ycol])
-            q = 2 / 3 if level == "upper" else 1 / 3
-            x_thresh, y_thresh = df_ref[[xcol, ycol]].quantile(q)
-            color = tercile_colors[level]
-            _ax.axvspan(
-                xmin=x_thresh if level == "upper" else xlim[0],
-                xmax=xlim[1] if level == "upper" else x_thresh,
-                facecolor=color,
-                alpha=tercile_alpha,
-                zorder=-2,
-            )
-            _ax.annotate(
-                f"  {level} tercile",
-                (x_thresh, ylim[0]),
-                color=color,
-                zorder=-1,
-                fontsize=8,
-                rotation=90,
-                fontstyle="italic",
-                alpha=0.5,
-                ha="left" if level == "upper" else "right",
-            )
-            _ax.axhspan(
-                ymin=y_thresh if level == "upper" else ylim[0],
-                ymax=ylim[1] if level == "upper" else y_thresh,
-                facecolor=color,
-                alpha=tercile_alpha,
-                zorder=-2,
-            )
-            _ax.annotate(
-                f"  {level} tercile",
-                (xlim[0], y_thresh),
-                color=color,
-                zorder=-1,
-                fontsize=8,
-                fontstyle="italic",
-                alpha=0.5,
-                va="bottom" if level == "upper" else "top",
-            )
-
-        if show_high_tercile:
-            show_tercile("upper")
-        if show_low_tercile:
-            show_tercile("lower")
-
-        max_bubble_size = 2000
-        if sizecol is None:
-            sizes = np.full(len(df), 0)
-            max_size_value = None
-        else:
-            sizes = df[sizecol].fillna(0) / df[sizecol].max() * max_bubble_size
-            max_size_value = df[sizecol].max()
-        if colorcol is None:
-            df["color"] = "k"
-        else:
-            df["color"] = df[colorcol].map(cerf_color_mapping)
-        _ax.scatter(
-            df[xcol],
-            df[ycol],
-            s=sizes,
-            c=df["color"],
-            alpha=0.3,
-            edgecolor="none",
-            zorder=2,
-        )
-        for year, row in df.set_index("year").iterrows():
-            _ax.annotate(
-                str(year),
-                (row[xcol], row[ycol]),
-                fontsize=8,
-                ha="center",
-                va="center",
-                color=row["color"],
-                rotation=rotation,
-                zorder=3,
-            )
-        # if show_current_forecast and "seas5" in xcol:
-        if show_current_forecast:
-            # if 2025 in df["year"].to_list():
-            forecast_year = df["year"].max()
-            current_val = df.set_index("year").loc[forecast_year][xcol]
-            _ax.axvline(current_val, color=current_color, linestyle="--", zorder=-1)
-            _ax.annotate(
-                f" {forecast_year} forecast",
-                (current_val, ylim[0]),
-                rotation=90,
-                va="bottom",
-                ha="right",
-                color=current_color,
-                zorder=-1,
-                fontstyle="italic",
-            )
-        _ax.set_xlabel(col_to_label.get(xcol, xcol))
-        _ax.set_ylabel(col_to_label.get(ycol, ycol))
-        if title is not None:
-            _ax.set_title(title)
-        _ax.spines["top"].set_visible(False)
-        _ax.spines["right"].set_visible(False)
-        _ax.set_xlim(xlim)
-        _ax.set_ylim(ylim)
-
-        if sizecol is not None or colorcol is not None:
-
-            def get_legend_y(row_num):
-                return ylim[1] - yrange * 0.04 - yrange * row_num * 0.03
-
-            legend_x = xlim[0] + xrange * 0.18
-
-            def plot_legend_box(xstart, xwidth):
-                rect = mpatches.Rectangle(
-                    (xstart, get_legend_y(4.7)),
-                    xwidth,
-                    yrange * 0.16,
-                    linewidth=0.5,
-                    color="white",
-                    zorder=0,
-                    alpha=0.5,
-                )
-                _ax.add_patch(rect)
-
-        if colorcol is not None:
-            _ax.annotate(
-                "CERF allocation:",
-                (legend_x, get_legend_y(0)),
-                va="top",
-                fontstyle="italic",
-                fontsize=6,
-            )
-            for i, (label, color) in enumerate(cerf_color_mapping.items()):
-                if str(label) == "nan":
-                    continue
-                _ax.annotate(
-                    label,
-                    (legend_x, get_legend_y(i + 1)),
-                    va="top",
-                    color=color,
-                    fontsize=6,
-                )
-            plot_legend_box(legend_x, xrange * 0.16)
-        if sizecol is not None:
-            x_legend_bubble = legend_x - xrange * 0.08
-            y_legend_bubble = get_legend_y(2)
-            _ax.scatter(
-                [x_legend_bubble],
-                [y_legend_bubble],
-                s=[max_bubble_size],
-                facecolor="none",
-                edgecolor="k",
-                linewidth=0.5,
-            )
-            _ax.annotate(
-                f"{sizecol}:\n{max_size_value:,.0f}",
-                (x_legend_bubble, y_legend_bubble),
-                ha="center",
-                va="center",
-                fontstyle="italic",
-                fontsize=6,
-            )
-            plot_legend_box(legend_x - xrange * 0.16, xrange * 0.16)
-            # rect = mpatches.Rectangle(
-            #     (legend_x - xrange * 0.16, get_legend_y(4.7)),
-            #     xrange * 0.32,
-            #     yrange * 0.16,
-            #     linewidth=0.5,
-            #     color="white",
-            #     zorder=0,
-            #     alpha=0.5,
-            # )
-            # _ax.add_patch(rect)
-        return (_fig, _ax)
-    return (plot_comparison,)
-
-
-@app.cell
-def _(
-    adm_name_str,
-    df_compare,
+    df_compare_sel,
     hazard,
     iso3,
-    issued_mo_str,
+    issued_month,
     min_year,
-    plot_comparison,
+    pcode_dropdown,
     show_current_forecast,
     show_high_tercile,
     show_low_tercile,
     valid_mo_str,
 ):
-    title_sk = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
+    adm_name_str = pcode_dropdown.selected_key
+    issued_mo_str = calendar.month_abbr[issued_month]
+    title = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
 
     CERF_ISO3S = ["SSD", "ETH"]
 
@@ -1194,13 +642,13 @@ def _(
     else:
         sizecol, colorcol = None, None
 
-    _fig, _ax = plot_comparison(
-        df_compare,
+    _fig, _ax = plot.plot_comparison(
+        df_compare_sel,
         xcol="mean_detrended_seas5",
         ycol="mean_detrended_era5",
         sizecol=sizecol,
         colorcol=colorcol,
-        title=title_sk,
+        title=title,
         min_year=min_year,
         show_high_tercile=show_high_tercile,
         show_low_tercile=show_low_tercile,
@@ -1212,11 +660,11 @@ def _(
 
 
 @app.cell
-def _(df_compare, min_year):
+def _(df_compare_sel, min_year):
     if min_year is not None:
-        df_ref = df_compare[df_compare["year"] >= min_year]
+        df_ref = df_compare_sel[df_compare_sel["year"] >= min_year]
     else:
-        df_ref = df_compare
+        df_ref = df_compare_sel
 
     df_ref = df_ref.dropna(subset=["mean_detrended_seas5", "mean_detrended_era5"])
 
@@ -1247,13 +695,13 @@ def _(df_compare, min_year):
 
 
 @app.cell
-def _(df_compare, df_ref, show_current_forecast):
+def _(df_compare_sel, df_ref, show_current_forecast):
     rps = {}
 
     if show_current_forecast:
         df_rp_calc = df_ref.copy()
-        forecast_year = df_compare["year"].max()
-        current_val = df_compare.set_index("year").loc[forecast_year][
+        forecast_year = df_compare_sel["year"].max()
+        current_val = df_compare_sel.set_index("year").loc[forecast_year][
             "mean_detrended_seas5"
         ]
         for _tercile in ["upper", "lower"]:
@@ -1287,7 +735,8 @@ def _(rps, show_current_forecast):
 
 @app.cell
 def _(metrics, rp_table_str):
-    mo.md(f"""
+    mo.md(
+        f"""
     ### Return Period
 
     {rp_table_str}
@@ -1297,13 +746,15 @@ def _(metrics, rp_table_str):
     | Correlation | Upper tercile F1 | Lower tercile F1 |
     |-|-|-|
     | {metrics["corr"]:.2f} | {metrics["upper_tpr"]:.2f} | {metrics["lower_tpr"]:.2f} |
-    """)
+    """
+    )
     return
 
 
 @app.cell
 def _():
-    mo.md(r"""
+    mo.md(
+        r"""
     ### Notes
 
     #### Plot
@@ -1328,60 +779,42 @@ def _():
     - For the F1 score, values less than 0.33 are **worse than random**, because the threshold is the tercile boundary.
     - F1 scores are calculated based on predictions and observations in the respective tercile. Because tercile thresholds are set for both the forecast and the reanalysis, there will be the same number of _predicted positive_ and _positive_ years. Thus by definition the F1 score will be the same as the TPR and PPV.
     - For standard accuracy metric defitions see the table [here](https://en.wikipedia.org/wiki/Confusion_matrix).
-    """)
+    """
+    )
     return
 
 
 @app.cell
 def _():
-    mo.md(r"""
-    ## Reference
-    """)
-    return
-
-
-@app.cell
-def _():
-    mo.md(r"""
     ### Seasonal rainfall
-    """)
-    return
 
-
-@app.cell
-def _(df_era5_all):
-    max_full_year = df_era5_all["valid_date"].dt.year.max() - 1
-    df_era5_monthly = (
-        df_era5_all[df_era5_all["valid_date"].dt.year <= max_full_year]
-        .groupby(df_era5_all["valid_date"].dt.month)["mean"]
-        .mean()
-        .reset_index()
-    )
-    df_era5_monthly["valid_month_str"] = df_era5_monthly["valid_date"].apply(
-        lambda x: calendar.month_abbr[x]
-    )
-    return df_era5_monthly, max_full_year
-
-
-@app.cell
-def _(adm_name_str, df_era5_all, df_era5_monthly, max_full_year):
-    _fig, _ax = plt.subplots(dpi=200)
-    df_era5_monthly.plot.bar(
-        x="valid_month_str", y="mean", legend=False, ax=_ax, color="royalblue"
-    )
-    _ax.set_xlabel("Month")
-    _ax.set_ylabel("Mean daily rainfall per month (mm) [ERA5]")
-    _ax.set_title(
-        f"{adm_name_str}: precipitation seasonality\n(reference period: {df_era5_all['valid_date'].dt.year.min()}-{max_full_year})"
-    )
-    _ax.spines["top"].set_visible(False)
-    _ax.spines["right"].set_visible(False)
-    _ax
+    # max_full_year = df_era5_all["valid_date"].dt.year.max() - 1
+    # df_era5_monthly = (
+    #     df_era5_all[df_era5_all["valid_date"].dt.year <= max_full_year]
+    #     .groupby(df_era5_all["valid_date"].dt.month)["mean"]
+    #     .mean()
+    #     .reset_index()
+    # )
+    # df_era5_monthly["valid_month_str"] = df_era5_monthly["valid_date"].apply(
+    #     lambda x: calendar.month_abbr[x]
+    # )
     return
 
 
 @app.cell
 def _():
+    # _fig, _ax = plt.subplots(dpi=200)
+    # df_era5_monthly.plot.bar(
+    #     x="valid_month_str", y="mean", legend=False, ax=_ax, color="royalblue"
+    # )
+    # _ax.set_xlabel("Month")
+    # _ax.set_ylabel("Mean daily rainfall per month (mm) [ERA5]")
+    # _ax.set_title(
+    #     f"{adm_name_str}: precipitation seasonality\n(reference period: {df_era5_all['valid_date'].dt.year.min()}-{max_full_year})"
+    # )
+    # _ax.spines["top"].set_visible(False)
+    # _ax.spines["right"].set_visible(False)
+    # _ax
     return
 
 

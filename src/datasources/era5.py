@@ -71,7 +71,7 @@ def aggregate_era5_yearly(
 
     # Ensure each year has *all* valid months
     complete_years = (
-        df_monthly.groupby("year")["month"]
+        df_monthly.groupby(["year"])["month"]
         .nunique()
         .loc[lambda x: x == len(valid_months)]
         .index
@@ -85,6 +85,6 @@ def aggregate_era5_yearly(
             return year if row["month"] >= 7 else year - 1
 
         df_complete["season_year"] = df_complete.apply(shift_valid_year, axis=1)
-    df_yearly = df_complete.groupby("year")["mean"].mean().reset_index()
+    df_yearly = df_complete.groupby(["year", "pcode"])["mean"].mean().reset_index()
     df_yearly = detrend_column(df_yearly, "mean", index_col="year")
     return df_yearly

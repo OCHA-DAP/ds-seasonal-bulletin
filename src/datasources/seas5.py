@@ -1,7 +1,10 @@
 from typing import List
+import calendar
 
 import ocha_stratus as stratus
 import pandas as pd
+
+from src.utils.timeseries import detrend_column
 
 
 def get_season_stats(iso3, adm_level, issued_month, valid_months, stage="prod"):
@@ -75,13 +78,36 @@ def aggregate_seas5_yearly(
         & (df["valid_date"].dt.month.isin(valid_months))
     ]
     df_yearly = (
-        df_monthly.groupby(df_monthly["issued_date"].dt.year)["mean"]
+        df_monthly.groupby([df_monthly["issued_date"].dt.year, "pcode"])["mean"]
         .mean()
         .reset_index()
     )
     df_yearly = df_yearly.rename(columns={"issued_date": "year"})
-    # max_year = df_yearly["year"].max()
-    # df_yearly = detrend_column(
-    #     df_yearly, "mean", index_col="year", max_index=max_index
-    # )
+
+    if min(valid_months) < issued_month and 12 not in valid_months:
+        df_yearly["year"] += 1
     return df_yearly
+
+def calculate_issued_months(return_latest_date=True, stage="prod"):
+    _query = """
+    SELECT MAX(issued_date) AS latest_date
+    FROM public.seas5;
+    """
+    with stratus.get_engine(stage).connect() as _conn:
+        df_latest_issue = pd.read_sql(
+            _query,
+            _conn,
+        )
+    latest_issued_date = df_latest_issue["latest_date"].iloc[0]
+    latest_issued_month = latest_issued_date.month
+    latest_issued_year = latest_issued_date.year
+    issued_month_dropdown_options = {}
+    for x in range(1, 13):
+        year = (
+            latest_issued_year if x <= latest_issued_month else latest_issued_year - 1
+        )
+        issued_month_dropdown_options.update({f"{calendar.month_abbr[x]} {year}": x})
+    if return_latest_date:
+        return issued_month_dropdown_options, latest_issued_date
+    else:
+        return issued_month_dropdown_options
