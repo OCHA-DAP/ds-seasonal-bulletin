@@ -19,13 +19,14 @@ with app.setup:
     _ = load_dotenv(find_dotenv(usecwd=True))
 
     # load admin data
-    df_adms = pd.read_sql(
-        "SELECT pcode, name, iso3, adm_level FROM public.polygon ORDER BY name ASC",
-        stratus.get_engine(stage="prod"),
-    )
+    engine = stratus.get_engine(stage="prod")
+    with engine.connect() as conn:
+        df_adms = pd.read_sql(
+            "SELECT pcode, name, iso3, adm_level FROM public.polygon ORDER BY name ASC",
+            conn,
+        )
     df_adm0 = df_adms.set_index("adm_level").loc[0]
-    df_adm1 = df_adms.set_index("adm_level").loc[1]
-    df_adm2 = df_adms.set_index("adm_level").loc[2]
+
     adm0_options = {
         row["name"]: row["pcode"]
         for _, row in df_adm0.iterrows()
@@ -33,6 +34,7 @@ with app.setup:
     }
 
     impact_col = "Total Affected"
+    val_col = "mean"  # or, mean_detrended
 
 
 @app.cell
@@ -42,10 +44,15 @@ def _():
         source = "seas5" if dataset == "forecast" else "era5"
         return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
+
     # @mo.cache
-    def get_season_stats(iso3, adm_level, valid_months, dataset, issued_month=None):
+    def get_season_stats(
+        iso3, adm_level, valid_months, dataset, issued_month=None
+    ):
         if dataset == "forecast":
-            df_raw = seas5.get_season_stats(iso3, adm_level, issued_month, valid_months)
+            df_raw = seas5.get_season_stats(
+                iso3, adm_level, issued_month, valid_months
+            )
             df_processed = seas5.aggregate_seas5_yearly(
                 df_raw, issued_month, valid_months
             )
@@ -54,14 +61,15 @@ def _():
             df_processed = era5.aggregate_era5_yearly(df_raw, valid_months)
         return df_processed
 
+
     @mo.cache
     def load_codab_from_blob(iso3, adm_level):
         return stratus.codab.load_codab_from_blob(iso3, adm_level)
 
+
     @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
-
     return get_cogs, get_pop, get_season_stats, load_codab_from_blob
 
 
@@ -70,7 +78,9 @@ def _():
     # Merge in the population and identify cases where people are in the lower tercile
     def lower_tercile_pop(df, df_pop, adm_level):
         _df = df.merge(
-            df_pop[["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]],
+            df_pop[
+                ["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]
+            ],
             left_on="pcode",
             right_on=f"admin{adm_level}_code",
         )
@@ -79,12 +89,12 @@ def _():
         )
         return _df
 
+
     def process_season_precip(df_precip, df_pop, adm_level, val_col="mean"):
         _df = df_precip.copy()
         _df = rp_calc.classify_groups_quantile(_df, q=0.33, column=val_col)
         _df = rp_calc.calculate_groups_rp(_df, "pcode", val_col)
         return lower_tercile_pop(_df, df_pop, adm_level)
-
     return (process_season_precip,)
 
 
@@ -111,10 +121,16 @@ def _():
     adm0_dropdown = mo.ui.dropdown(
         options=adm0_options, label="Country", value="Ethiopia"
     )
-    adm_level_dropdown_sk = mo.ui.dropdown(options=[1, 2], label="Admin level", value=1)
+    adm_level_dropdown_sk = mo.ui.dropdown(
+        options=[1, 2], label="Admin level", value=1
+    )
 
     mo.hstack(
-        [mo.md("**Administrative division:**"), adm0_dropdown, adm_level_dropdown_sk],
+        [
+            mo.md("**Administrative division:**"),
+            adm0_dropdown,
+            adm_level_dropdown_sk,
+        ],
         justify="start",
     )
     return adm0_dropdown, adm_level_dropdown_sk
@@ -142,7 +158,9 @@ def _(adm0_dropdown, adm_level_dropdown_sk):
 
 @app.cell
 def _():
-    issued_month_dropdown_options, latest_issued_date = seas5.calculate_issued_months()
+    issued_month_dropdown_options, latest_issued_date = (
+        seas5.calculate_issued_months()
+    )
 
     issued_month_dropdown = mo.ui.dropdown(
         options=issued_month_dropdown_options,
@@ -187,7 +205,9 @@ def _(disaster_type_dropdown, issued_month_dropdown, valid_months_slider):
 
     valid_months = [
         (issued_month + x - 1) % 12 + 1
-        for x in range(valid_months_slider.value[0], valid_months_slider.value[1] + 1)
+        for x in range(
+            valid_months_slider.value[0], valid_months_slider.value[1] + 1
+        )
     ]
 
     if len(valid_months) < 3:
@@ -203,6 +223,7 @@ def _():
         label="Retrieve data? Make sure your selections above are correct.",
         value=False,
     )
+
     mo.callout(mo.hstack([data_switch]), kind="warn")
     return (data_switch,)
 
@@ -227,7 +248,9 @@ def _(
 
     # --- Do we want to display the forecast or just the reanalysis?
     forecast_issued_year = df_forecast["year"].max()
-    show_current_forecast = forecast_issued_year not in df_reanalysis["year"].values
+    show_current_forecast = (
+        forecast_issued_year not in df_reanalysis["year"].values
+    )
     # valid_months_note = (
     #     ""
     #     if show_current_forecast
@@ -263,7 +286,26 @@ def _(
         .merge(df_cerf, how="outer")
     )
     df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
-    return df_compare, df_forecast, df_reanalysis, show_current_forecast
+    season_year = df_compare.year.max()
+    return (
+        df_compare,
+        df_forecast,
+        df_reanalysis,
+        season_year,
+        show_current_forecast,
+    )
+
+
+@app.cell
+def _(show_current_forecast):
+    summary_text = (
+        "**Reanalysis not yet available. Season summary will be based on SEAS5 forecasts.**"
+        if show_current_forecast
+        else "**Season summary based on ERA5 Reanalysis.**"
+    )
+
+    mo.md(summary_text)
+    return
 
 
 @app.cell(hide_code=True)
@@ -273,9 +315,9 @@ def _():
 
 
 @app.cell
-def _(MONTHS):
-    season_str = "".join(calendar.month_name[month][0] for month in MONTHS)
-    return (season_str,)
+def _():
+    mo.Html("<hr></hr>")
+    return
 
 
 @app.cell
@@ -303,7 +345,7 @@ def _(adm_level, iso3, issued_month, show_current_forecast, valid_months):
     #     ]
     #     CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
     #     title = (
-    #         f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Outlook"
+    #         f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {valid_mo_str} Season Outlook"
     #     )
     #     subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
     # else:
@@ -315,15 +357,9 @@ def _(adm_level, iso3, issued_month, show_current_forecast, valid_months):
     #     ]
     #     # TODO - Does not handle year crossing
     #     CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
-    #     title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {season_str} Season Overview"
+    #     title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {valid_mo_str} Season Overview"
     #     subtitle = "#### ECMWF ERA5 Reanalysis"
-    return DATASET, ISSUED_MONTH, MONTHS
-
-
-@app.cell
-def _():
-    val_col = "mean"  # or, mean_detrended
-    return (val_col,)
+    return (DATASET,)
 
 
 @app.cell
@@ -337,11 +373,12 @@ def _(
     load_codab_from_blob,
     process_season_precip,
     show_current_forecast,
-    val_col,
 ):
     df_display = df_forecast if show_current_forecast else df_reanalysis
     df_pop = get_pop(iso3, adm_level)
-    df_display = process_season_precip(df_display, df_pop, adm_level, val_col=val_col)
+    df_display = process_season_precip(
+        df_display, df_pop, adm_level, val_col=val_col
+    )
     gdf = load_codab_from_blob(iso3, adm_level)
 
     if admin_filtering.value:
@@ -350,31 +387,35 @@ def _(
 
 
 @app.cell
-def _(SEASON_YEAR, df_display, val_col):
+def _(df_display, season_year):
     # Get return periods on population exposed per season
-    _df = df_display.groupby("year")[[val_col, "pop_lower_tercile"]].sum().reset_index()
+    _df = (
+        df_display.groupby("year")[[val_col, "pop_lower_tercile"]]
+        .sum()
+        .reset_index()
+    )
     df_annual_sum_precip = rp_calc.calculate_one_group_rp(
         _df, "pop_lower_tercile", ascending=False
     )
-    rp = df_annual_sum_precip.loc[df_annual_sum_precip["year"] == SEASON_YEAR][
+    rp = df_annual_sum_precip.loc[df_annual_sum_precip["year"] == season_year][
         "pop_lower_tercile_rp"
     ].values[0]
-    pop = df_annual_sum_precip.loc[df_annual_sum_precip["year"] == SEASON_YEAR][
+    pop = df_annual_sum_precip.loc[df_annual_sum_precip["year"] == season_year][
         "pop_lower_tercile"
     ].values[0]
     return df_annual_sum_precip, pop, rp
 
 
 @app.cell
-def _(pop, rp, season_str):
+def _(pop, rp, valid_mo_str):
     mo.md(
-        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
+        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {valid_mo_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
     )
     return
 
 
 @app.cell
-def graph_scatter(SEASON_YEAR, df_annual_sum_precip):
+def graph_scatter(df_annual_sum_precip, season_year):
     # df_cerf_annual = None
     # if ISO3 == "ETH":
     #     df_cerf = stratus.load_csv_from_blob(
@@ -388,7 +429,7 @@ def graph_scatter(SEASON_YEAR, df_annual_sum_precip):
     #         df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
     #     )
 
-    plot.plot_annual_scatter(df_annual_sum_precip, SEASON_YEAR, None)
+    plot.plot_annual_scatter(df_annual_sum_precip, season_year, None)
     return
 
 
@@ -413,7 +454,7 @@ def _():
 
 
 @app.cell
-def _(val_col):
+def _():
     map_variable = mo.ui.radio(
         options=["population", f"{val_col}_rp"],
         label="Select variable to display:",
@@ -425,7 +466,7 @@ def _(val_col):
 
 
 @app.cell
-def graph_rp(adm_level, df_display, gdf, map_variable, val_col):
+def graph_rp(adm_level, df_display, gdf, map_variable):
     # Prep and plot geodata on map for current return periods
     _df = df_display[df_display.year == df_display.year.max()]
 
@@ -455,7 +496,7 @@ def graph_rp(adm_level, df_display, gdf, map_variable, val_col):
 
 
 @app.cell
-def _(adm_level, gdf_merged, val_col):
+def _(adm_level, gdf_merged):
     gdf_merged[
         [
             f"ADM{adm_level}_EN",
@@ -465,12 +506,6 @@ def _(adm_level, gdf_merged, val_col):
             "population",
         ]
     ].sort_values(f"{val_col}_rp", ascending=False, axis=0).dropna()
-    return
-
-
-@app.cell
-def _():
-    mo.Html("<br><br>")
     return
 
 
@@ -501,13 +536,13 @@ def _(
     CLIM_DATES,
     CUR_DATES,
     DATASET,
-    ISSUED_MONTH,
-    MONTHS,
-    SEASON_YEAR,
     anomaly_switch,
     gdf,
     gdf_merged,
     get_cogs,
+    issued_month,
+    season_year,
+    valid_months,
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
@@ -517,9 +552,9 @@ def _(
     da_clim_processed, da_cur_processed = precip.process_cogs(
         da_clim=da_clim,
         da_cur=da_cur,
-        months=MONTHS,
-        issued_month=ISSUED_MONTH,
-        season_year=SEASON_YEAR,
+        months=valid_months,
+        issued_month=issued_month,
+        season_year=season_year,
     )
     da_anom = da_cur_processed - da_clim_processed
 
@@ -625,7 +660,9 @@ def _():
 def _(min_year_selector):
     min_year = min_year_selector.value
     min_year_note = (
-        "_note that impact data before 2000 is not shown_" if min_year < 2000 else ""
+        "_note that impact data before 2000 is not shown_"
+        if min_year < 2000
+        else ""
     )
     return (min_year,)
 
