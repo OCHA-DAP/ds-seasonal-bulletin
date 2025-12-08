@@ -9,12 +9,9 @@ def filter_adm(iso3, adm_level, df_filter):
         filter_pcodes = list(
             df_seasonality[df_seasonality.cluster == 1][f"ADM{adm_level}_PCODE"]
         )
-        _df = _df[
-            _df.pcode.isin(filter_pcodes)
-        ]
+        _df = _df[_df.pcode.isin(filter_pcodes)]
         return _df
     except Exception as e:
         print(e)
         print("Error reading seasonality file! Not filtering locations")
         return df_filter
-    

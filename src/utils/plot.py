@@ -120,10 +120,7 @@ def plot_map(gdf, adm_level, variable, val_col="mean"):
 
 
 def plot_annual_scatter(
-    df_annual_summary,
-    highlight_year,
-    df_cerf_annual=None,
-    val_col="mean"
+    df_annual_summary, highlight_year, df_cerf_annual=None, val_col="mean"
 ):
 
     _df = df_annual_summary.copy()
@@ -332,7 +329,7 @@ def plot_comparison(
     show_low_tercile: bool = False,
     show_current_forecast: bool = True,
 ):
-    
+
     tercile_colors = {"upper": "royalblue", "lower": "chocolate"}
     current_color = "mediumorchid"
     cerf_color_mapping = {

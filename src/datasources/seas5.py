@@ -88,6 +88,7 @@ def aggregate_seas5_yearly(
         df_yearly["year"] += 1
     return df_yearly
 
+
 def calculate_issued_months(return_latest_date=True, stage="prod"):
     _query = """
     SELECT MAX(issued_date) AS latest_date

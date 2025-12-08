@@ -42,11 +42,13 @@ def _():
         source = "seas5" if dataset == "forecast" else "era5"
         return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
-    #@mo.cache
+    # @mo.cache
     def get_season_stats(iso3, adm_level, valid_months, dataset, issued_month=None):
         if dataset == "forecast":
             df_raw = seas5.get_season_stats(iso3, adm_level, issued_month, valid_months)
-            df_processed = seas5.aggregate_seas5_yearly(df_raw, issued_month, valid_months)
+            df_processed = seas5.aggregate_seas5_yearly(
+                df_raw, issued_month, valid_months
+            )
         elif dataset == "reanalysis":
             df_raw = era5.get_season_stats(iso3, adm_level, valid_months)
             df_processed = era5.aggregate_era5_yearly(df_raw, valid_months)
@@ -59,6 +61,7 @@ def _():
     @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
+
     return get_cogs, get_pop, get_season_stats, load_codab_from_blob
 
 
@@ -81,6 +84,7 @@ def _():
         _df = rp_calc.classify_groups_quantile(_df, q=0.33, column=val_col)
         _df = rp_calc.calculate_groups_rp(_df, "pcode", val_col)
         return lower_tercile_pop(_df, df_pop, adm_level)
+
     return (process_season_precip,)
 
 
@@ -107,11 +111,12 @@ def _():
     adm0_dropdown = mo.ui.dropdown(
         options=adm0_options, label="Country", value="Ethiopia"
     )
-    adm_level_dropdown_sk = mo.ui.dropdown(
-        options=[1, 2], label="Admin level", value=1
-    )
+    adm_level_dropdown_sk = mo.ui.dropdown(options=[1, 2], label="Admin level", value=1)
 
-    mo.hstack([mo.md("**Administrative division:**"), adm0_dropdown, adm_level_dropdown_sk], justify="start")
+    mo.hstack(
+        [mo.md("**Administrative division:**"), adm0_dropdown, adm_level_dropdown_sk],
+        justify="start",
+    )
     return adm0_dropdown, adm_level_dropdown_sk
 
 
@@ -120,7 +125,9 @@ def _():
     admin_filtering = mo.ui.switch(
         label="Filter to locations with bimodal seasons", value=True
     )
-    mo.hstack([mo.md("**Administrative subsetting:**"), admin_filtering], justify="start")
+    mo.hstack(
+        [mo.md("**Administrative subsetting:**"), admin_filtering], justify="start"
+    )
     return (admin_filtering,)
 
 
@@ -151,7 +158,15 @@ def _():
 
 @app.cell
 def _(issued_month_dropdown, valid_mo_str, valid_months_slider):
-    mo.hstack([mo.md("**Date selection:**"), issued_month_dropdown, valid_months_slider, valid_mo_str], justify="start")
+    mo.hstack(
+        [
+            mo.md("**Date selection:**"),
+            issued_month_dropdown,
+            valid_months_slider,
+            valid_mo_str,
+        ],
+        justify="start",
+    )
     return
 
 
@@ -205,7 +220,9 @@ def _(
     mo.stop(not data_switch.value, mo.md(""))
 
     # --- Retrieve yearly summary stats
-    df_forecast = get_season_stats(iso3, adm_level, valid_months, "forecast", issued_month)
+    df_forecast = get_season_stats(
+        iso3, adm_level, valid_months, "forecast", issued_month
+    )
     df_reanalysis = get_season_stats(iso3, adm_level, valid_months, "reanalysis")
 
     # --- Do we want to display the forecast or just the reanalysis?
@@ -233,10 +250,15 @@ def _(
     # TODO: Connect to real data
     df_cerf = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
 
-    # --- Merge the forecast and reanalysis datasets together, 
+    # --- Merge the forecast and reanalysis datasets together,
     # --- and combine with CERF and EM-DAT impact data
     df_compare = (
-        df_forecast.merge(df_reanalysis, on=["year", "pcode"], how="outer", suffixes=("_seas5", "_era5"))
+        df_forecast.merge(
+            df_reanalysis,
+            on=["year", "pcode"],
+            how="outer",
+            suffixes=("_seas5", "_era5"),
+        )
         .merge(df_emdat, how="outer")
         .merge(df_cerf, how="outer")
     )
@@ -330,11 +352,7 @@ def _(
 @app.cell
 def _(SEASON_YEAR, df_display, val_col):
     # Get return periods on population exposed per season
-    _df = (
-        df_display.groupby("year")[[val_col, "pop_lower_tercile"]]
-        .sum()
-        .reset_index()
-    )
+    _df = df_display.groupby("year")[[val_col, "pop_lower_tercile"]].sum().reset_index()
     df_annual_sum_precip = rp_calc.calculate_one_group_rp(
         _df, "pop_lower_tercile", ascending=False
     )
@@ -349,7 +367,9 @@ def _(SEASON_YEAR, df_display, val_col):
 
 @app.cell
 def _(pop, rp, season_str):
-    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
+    mo.md(
+        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {season_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
+    )
     return
 
 
@@ -386,7 +406,9 @@ def _():
 
 @app.cell
 def _():
-    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
+    mo.md(
+        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
+    )
     return
 
 
