@@ -34,7 +34,8 @@ with app.setup:
     }
 
     impact_col = "Total Affected"
-    val_col = "mean"  # or, mean_detrended
+    CLIM_START = 1993  # Follows ECMWF
+    CLIM_END = 2016
 
 
 @app.cell
@@ -118,11 +119,17 @@ def _():
 
 @app.cell
 def _():
+    mo.Html("<hr></hr>")
+    return
+
+
+@app.cell
+def _():
     adm0_dropdown = mo.ui.dropdown(
-        options=adm0_options, label="Country", value="Ethiopia"
+        options=adm0_options, label="Country", value="Ethiopia", searchable=True
     )
     adm_level_dropdown_sk = mo.ui.dropdown(
-        options=[1, 2], label="Admin level", value=1
+        options=[0, 1, 2], label="Admin level", value=1
     )
 
     mo.hstack(
@@ -199,9 +206,23 @@ def _():
 
 
 @app.cell
-def _(disaster_type_dropdown, issued_month_dropdown, valid_months_slider):
+def _():
+    data_type_radio = mo.ui.radio(inline=True, options=["detrended", "original data"], value="detrended")
+
+    mo.hstack([mo.md("**Data processing options:**"), data_type_radio], justify="start")
+    return (data_type_radio,)
+
+
+@app.cell
+def _(
+    data_type_radio,
+    disaster_type_dropdown,
+    issued_month_dropdown,
+    valid_months_slider,
+):
     issued_month = issued_month_dropdown.value
     disaster_type = disaster_type_dropdown.value
+    val_col = "mean" if data_type_radio.value == "original data" else "mean_detrended"
 
     valid_months = [
         (issued_month + x - 1) % 12 + 1
@@ -214,7 +235,7 @@ def _(disaster_type_dropdown, issued_month_dropdown, valid_months_slider):
         valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
     else:
         valid_mo_str = "".join([calendar.month_abbr[x][0] for x in valid_months])
-    return disaster_type, issued_month, valid_mo_str, valid_months
+    return disaster_type, issued_month, val_col, valid_mo_str, valid_months
 
 
 @app.cell
@@ -233,6 +254,7 @@ def _(
     adm_level,
     data_switch,
     disaster_type,
+    get_pop,
     get_season_stats,
     iso3,
     issued_month,
@@ -251,11 +273,8 @@ def _(
     show_current_forecast = (
         forecast_issued_year not in df_reanalysis["year"].values
     )
-    # valid_months_note = (
-    #     ""
-    #     if show_current_forecast
-    #     else "_reanalysis available; current forecast line will not be shown_"
-    # )
+
+    # TODO: Don't totally follow this logic
     max_index = (
         forecast_issued_year - 1 if show_current_forecast else forecast_issued_year
     )
@@ -287,9 +306,13 @@ def _(
     )
     df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
     season_year = df_compare.year.max()
+
+    # --- Load population data
+    df_pop = get_pop(iso3, adm_level)
     return (
         df_compare,
         df_forecast,
+        df_pop,
         df_reanalysis,
         season_year,
         show_current_forecast,
@@ -321,61 +344,20 @@ def _():
 
 
 @app.cell
-def _(adm_level, iso3, issued_month, show_current_forecast, valid_months):
-    # INPUT PARAMETERS
-    # ISO3 = iso3_dropdown.value
-    ISO3 = iso3
-    # ADM_LEVEL = adm_level_dropdown.value
-    ADM_LEVEL = adm_level
-    # MONTHS = season_months
-    MONTHS = valid_months
-    # SEASON_YEAR = season_year_dropdown.value
-    # SEASON_YEAR = int(forecast_issued_year)
-    # DATASET = data_source_dropdown.value
-    DATASET = "forecast" if show_current_forecast else "reanalysis"
-    # CLIM_START = 1993  # Follows ECMWF
-    # CLIM_END = 2016  # Follows ECMWF
-
-    ISSUED_MONTH = issued_month
-
-    # if DATASET == "forecast":
-    #     ISSUED_MONTH = MONTHS[0] - leadtime_month_dropdown.value
-    #     CLIM_DATES = [
-    #         f"{year}-{ISSUED_MONTH:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
-    #     ]
-    #     CUR_DATES = [f"{SEASON_YEAR}-{ISSUED_MONTH:02d}-01"]
-    #     title = (
-    #         f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {valid_mo_str} Season Outlook"
-    #     )
-    #     subtitle = f"#### ECMWF Seasonal Forecast issued {calendar.month_name[ISSUED_MONTH]} {SEASON_YEAR} ({leadtime_month_dropdown.value} month leadtime)"
-    # else:
-    #     ISSUED_MONTH = None
-    #     CLIM_DATES = [
-    #         f"{year}-{month:02d}-01"
-    #         for year in range(CLIM_START, CLIM_END + 1)
-    #         for month in MONTHS
-    #     ]
-    #     # TODO - Does not handle year crossing
-    #     CUR_DATES = [f"{SEASON_YEAR}-{month:02d}-01" for month in MONTHS]
-    #     title = f"# {iso3_dropdown.selected_key}: {SEASON_YEAR} {valid_mo_str} Season Overview"
-    #     subtitle = "#### ECMWF ERA5 Reanalysis"
-    return (DATASET,)
-
-
-@app.cell
 def _(
     adm_level,
     admin_filtering,
     df_forecast,
+    df_pop,
     df_reanalysis,
-    get_pop,
     iso3,
     load_codab_from_blob,
     process_season_precip,
     show_current_forecast,
+    val_col,
 ):
     df_display = df_forecast if show_current_forecast else df_reanalysis
-    df_pop = get_pop(iso3, adm_level)
+
     df_display = process_season_precip(
         df_display, df_pop, adm_level, val_col=val_col
     )
@@ -387,7 +369,7 @@ def _(
 
 
 @app.cell
-def _(df_display, season_year):
+def _(df_display, season_year, val_col):
     # Get return periods on population exposed per season
     _df = (
         df_display.groupby("year")[[val_col, "pop_lower_tercile"]]
@@ -408,28 +390,13 @@ def _(df_display, season_year):
 
 @app.cell
 def _(pop, rp, valid_mo_str):
-    mo.md(
-        f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {valid_mo_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."""
-    )
+    mo.md(f"""**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {valid_mo_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms.""")
     return
 
 
 @app.cell
-def graph_scatter(df_annual_sum_precip, season_year):
-    # df_cerf_annual = None
-    # if ISO3 == "ETH":
-    #     df_cerf = stratus.load_csv_from_blob(
-    #         "ds-seasonal-bulletin/misc/CERF Donor Contributions and Allocations - Ethiopia (Drought).csv"
-    #     )
-    #     df_cerf = df_cerf[df_cerf.Season.str.contains("OND")]
-    #     df_cerf["Approved amount in US$"] = pd.to_numeric(
-    #         df_cerf["Approved amount in US$"].str.replace(",", ""), errors="coerce"
-    #     )
-    #     df_cerf_annual = (
-    #         df_cerf.groupby("SEASON_YEAR")["Approved amount in US$"].sum().reset_index()
-    #     )
-
-    plot.plot_annual_scatter(df_annual_sum_precip, season_year, None)
+def graph_scatter(df_annual_sum_precip, season_year, val_col):
+    plot.plot_annual_scatter(df_annual_sum_precip, season_year, val_col, None)
     return
 
 
@@ -447,14 +414,12 @@ def _():
 
 @app.cell
 def _():
-    mo.md(
-        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
-    )
+    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
     return
 
 
 @app.cell
-def _():
+def _(val_col):
     map_variable = mo.ui.radio(
         options=["population", f"{val_col}_rp"],
         label="Select variable to display:",
@@ -466,7 +431,7 @@ def _():
 
 
 @app.cell
-def graph_rp(adm_level, df_display, gdf, map_variable):
+def graph_rp(adm_level, df_display, gdf, map_variable, val_col):
     # Prep and plot geodata on map for current return periods
     _df = df_display[df_display.year == df_display.year.max()]
 
@@ -491,21 +456,33 @@ def graph_rp(adm_level, df_display, gdf, map_variable):
     # Simplify geometry for faster visualization
     gdf_merged["geometry"] = gdf_merged["geometry"].simplify(tolerance=0.01)
 
-    plot.plot_map(gdf_merged, adm_level, map_variable.value)
+    plot.plot_map(gdf_merged, adm_level, map_variable.value, val_col)
     return (gdf_merged,)
 
 
 @app.cell
-def _(adm_level, gdf_merged):
-    gdf_merged[
-        [
-            f"ADM{adm_level}_EN",
-            "pcode",
-            f"{val_col}_rp",
-            "meets_threshold",
-            "population",
+def _():
+    mo.Html("<br>")
+    return
+
+
+@app.cell
+def _(adm_level, gdf_merged, val_col):
+    gdf_display = (
+        gdf_merged[
+            [
+                f"ADM{adm_level}_EN",
+                "pcode",
+                f"{val_col}_rp",
+                "meets_threshold",
+                "population",
+            ]
         ]
-    ].sort_values(f"{val_col}_rp", ascending=False, axis=0).dropna()
+        .sort_values(f"{val_col}_rp", ascending=False, axis=0)
+        .dropna()
+    )
+
+    mo.accordion({"### Display Data": gdf_display})
     return
 
 
@@ -533,21 +510,36 @@ def _():
 
 @app.cell
 def _(
-    CLIM_DATES,
-    CUR_DATES,
-    DATASET,
     anomaly_switch,
     gdf,
     gdf_merged,
     get_cogs,
     issued_month,
     season_year,
+    show_current_forecast,
     valid_months,
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
-    da_clim = get_cogs(CLIM_DATES, gdf, DATASET)
-    da_cur = get_cogs(CUR_DATES, gdf, DATASET)
+    dataset = "forecast" if show_current_forecast else "reanalysis"
+
+    if dataset == "forecast":
+        clim_dates = [
+            f"{year}-{issued_month:02d}-01"
+            for year in range(CLIM_START, CLIM_END + 1)
+        ]
+        cur_dates = [f"{season_year}-{issued_month:02d}-01"]
+    else:
+        clim_dates = [
+            f"{year}-{month:02d}-01"
+            for year in range(CLIM_START, CLIM_END + 1)
+            for month in valid_months
+        ]
+        # TODO - Does not handle year crossing
+        cur_dates = [f"{season_year}-{month:02d}-01" for month in valid_months]
+
+    da_clim = get_cogs(clim_dates, gdf, dataset)
+    da_cur = get_cogs(cur_dates, gdf, dataset)
 
     da_clim_processed, da_cur_processed = precip.process_cogs(
         da_clim=da_clim,
@@ -579,13 +571,19 @@ def _():
 
 @app.cell
 def _():
+    mo.Html("<hr></hr>")
+    return
+
+
+@app.cell
+def _():
     high_tercile_selector = mo.ui.checkbox(label="Upper tercile")
     low_tercile_selector = mo.ui.checkbox(label="Lower tercile")
 
     mo.hstack(
         [
             mo.md("Show tercile boundaries:"),
-            mo.vstack([high_tercile_selector, low_tercile_selector], gap=0),
+            mo.hstack([high_tercile_selector, low_tercile_selector], justify="start"),
         ],
         align="center",
     )
@@ -593,23 +591,18 @@ def _():
 
 
 @app.cell
-def _(gdf_merged):
-    pcodes = dict(zip(gdf_merged["ADM2_EN"], gdf_merged["ADM2_PCODE"]))
-    pcode_dropdown = mo.ui.dropdown(options=pcodes, label="Select an admin unit")
-    return (pcode_dropdown,)
-
-
-@app.cell
-def _(pcode_dropdown):
+def _(adm_level, gdf_merged):
+    pcodes = dict(
+        zip(gdf_merged[f"ADM{adm_level}_EN"], gdf_merged[f"ADM{adm_level}_PCODE"])
+    )
+    pcode_dropdown = mo.ui.dropdown(
+        options=pcodes,
+        label="Select an admin unit:",
+        value=list(pcodes.keys())[0],
+        searchable=True,
+    )
     pcode_dropdown
-    return
-
-
-@app.cell
-def _(high_tercile_selector, low_tercile_selector):
-    show_high_tercile = high_tercile_selector.value
-    show_low_tercile = low_tercile_selector.value
-    return show_high_tercile, show_low_tercile
+    return (pcode_dropdown,)
 
 
 @app.cell
@@ -657,14 +650,13 @@ def _():
 
 
 @app.cell
-def _(min_year_selector):
-    min_year = min_year_selector.value
+def _(min_year):
     min_year_note = (
         "_note that impact data before 2000 is not shown_"
         if min_year < 2000
         else ""
     )
-    return (min_year,)
+    return
 
 
 @app.cell
@@ -677,16 +669,19 @@ def _(df_compare, pcode_dropdown):
 def _(
     df_compare_sel,
     hazard,
+    high_tercile_selector,
     iso3,
     issued_month,
-    min_year,
+    low_tercile_selector,
+    min_year_selector,
     pcode_dropdown,
     show_current_forecast,
-    show_high_tercile,
-    show_low_tercile,
     valid_mo_str,
 ):
     adm_name_str = pcode_dropdown.selected_key
+    min_year = min_year_selector.value
+    show_high_tercile = high_tercile_selector.value
+    show_low_tercile = low_tercile_selector.value
     issued_mo_str = calendar.month_abbr[issued_month]
     title = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
 
@@ -715,7 +710,7 @@ def _(
     )
 
     _fig
-    return
+    return (min_year,)
 
 
 @app.cell
@@ -812,9 +807,9 @@ def _(metrics, rp_table_str):
 
 @app.cell
 def _():
-    mo.md(
-        r"""
-    ### Notes
+    mo.accordion(
+        {
+            "### Notes": mo.md("""
 
     #### Plot
     - The year shown is the year of the _first valid_ month. For example, a forecast issued in Nov 2025 would appear as the year:
@@ -838,7 +833,8 @@ def _():
     - For the F1 score, values less than 0.33 are **worse than random**, because the threshold is the tercile boundary.
     - F1 scores are calculated based on predictions and observations in the respective tercile. Because tercile thresholds are set for both the forecast and the reanalysis, there will be the same number of _predicted positive_ and _positive_ years. Thus by definition the F1 score will be the same as the TPR and PPV.
     - For standard accuracy metric defitions see the table [here](https://en.wikipedia.org/wiki/Confusion_matrix).
-    """
+        """)
+        }
     )
     return
 

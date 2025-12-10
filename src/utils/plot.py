@@ -11,7 +11,7 @@ LIGHT_GRAY = "#eeeeee"
 DARK_GRAY = "#888888"
 
 
-def plot_map(gdf, adm_level, variable, val_col="mean"):
+def plot_map(gdf, adm_level, variable, val_col):
     if variable == "population":
         color_scale = "Blues"
         color_range = [gdf.population.min(), gdf.population.max()]
@@ -120,7 +120,7 @@ def plot_map(gdf, adm_level, variable, val_col="mean"):
 
 
 def plot_annual_scatter(
-    df_annual_summary, highlight_year, df_cerf_annual=None, val_col="mean"
+    df_annual_summary, highlight_year, val_col, df_cerf_annual=None,
 ):
 
     _df = df_annual_summary.copy()
@@ -206,7 +206,7 @@ def plot_annual_scatter(
         title=f"<b>Total seasonal rainfall vs est. population impacted by drought</b><br><sub>From 2000 to {highlight_year}</sub>",
         margin=dict(l=0, r=0, t=50, b=0),
         xaxis=dict(
-            title="Total Rainfall (mm)",
+            title="Mean daily rainfall (mm)",
             showgrid=False,
         ),
         yaxis=dict(
@@ -344,7 +344,7 @@ def plot_comparison(
         "mean_detrended_era5": "Observed mean daily rainfall (mm) [ERA5]",
     }
 
-    _fig, _ax = plt.subplots(dpi=200, figsize=(7, 7))
+    _fig, _ax = plt.subplots(dpi=200, figsize=(4, 4))
     if min_year is not None:
         df = df[df["year"] >= min_year]
     df = df.copy()
