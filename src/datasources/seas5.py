@@ -115,3 +115,8 @@ def calculate_issued_months(return_latest_date=True, stage="prod"):
         return issued_month_dropdown_options, latest_issued_date
     else:
         return issued_month_dropdown_options
+
+
+# Convert string dates to datetime
+def aggregate_seas5_cogs_yearly(da, leadtimes):
+    return da.where(da.leadtime.isin(leadtimes), drop=True).mean(dim='leadtime').mean(dim='date')

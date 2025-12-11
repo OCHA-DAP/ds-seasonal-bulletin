@@ -2,6 +2,7 @@ from typing import List
 
 import ocha_stratus as stratus
 import pandas as pd
+import numpy as np
 
 from src.utils.timeseries import detrend_column
 
@@ -88,3 +89,22 @@ def aggregate_era5_yearly(
     df_yearly = df_complete.groupby(["year", "pcode"])["mean"].mean().reset_index()
     df_yearly = detrend_column(df_yearly, "mean", index_col="year")
     return df_yearly
+
+
+def aggregate_era5_cogs_yearly(da):
+    dates = pd.to_datetime(da.date.values)
+    months = dates.month.values
+    years = dates.year.values
+    
+    # Assign season_year
+    unique_months = np.unique(months)
+    if 1 in unique_months and 12 in unique_months:
+        season_year = np.where(months >= 7, years, years - 1)
+    else:
+        season_year = years
+    
+    # Add as coordinate
+    da = da.assign_coords(season_year=("date", season_year))
+    
+    # Group and mean
+    return da.groupby("season_year").mean(dim="date").mean(dim="season_year")

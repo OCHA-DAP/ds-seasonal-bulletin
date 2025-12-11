@@ -264,7 +264,7 @@ def plot_anomaly(ds, gdf):
     )
     fig.update_coloraxes(
         colorbar=dict(
-            title="Rainfall anomaly<br>(mm)",
+            title="Rainfall anomaly<br>(avg mm/day)",
         )
     )
     fig.update_layout(
@@ -306,7 +306,7 @@ def plot_climatology(ds, gdf):
     )
     fig.update_coloraxes(
         colorbar=dict(
-            title="Seasonal rainfall<br>(mm)",
+            title="Seasonal rainfall<br>(avg mm/day)",
         )
     )
     fig.update_layout(

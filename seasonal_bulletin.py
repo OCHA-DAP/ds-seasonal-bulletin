@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.15.2"
+__generated_with = "0.16.2"
 app = marimo.App()
 
 with app.setup:
@@ -52,7 +52,6 @@ def _():
             for _, row in _df_adm0.iterrows()
             if row["name"] is not None
         }
-
     return get_adm0_options, get_cogs, get_pop, load_codab_from_blob
 
 
@@ -77,7 +76,6 @@ def _():
             _df, "pop_lower_tercile", ascending=False
         )
         return df_annual_sum_precip
-
     return lower_tercile_pop, summarize_annually
 
 
@@ -205,16 +203,24 @@ def _(
     disaster_type = disaster_type_dropdown.value
     val_col = "mean" if data_type_radio.value == "original data" else "mean_detrended"
 
+    leadtimes = list(range(valid_months_slider.value[0], valid_months_slider.value[1] + 1))
     valid_months = [
         (issued_month + x - 1) % 12 + 1
-        for x in range(valid_months_slider.value[0], valid_months_slider.value[1] + 1)
+        for x in leadtimes
     ]
 
     if len(valid_months) < 3:
         valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
     else:
         valid_mo_str = "".join([calendar.month_abbr[x][0] for x in valid_months])
-    return disaster_type, issued_month, val_col, valid_mo_str, valid_months
+    return (
+        disaster_type,
+        issued_month,
+        leadtimes,
+        val_col,
+        valid_mo_str,
+        valid_months,
+    )
 
 
 @app.cell
@@ -344,9 +350,7 @@ def _():
 
 @app.cell
 def _():
-    mo.md(
-        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
-    )
+    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
     return
 
 
@@ -446,50 +450,47 @@ def _(
     get_cogs,
     issued_month,
     issued_year,
+    leadtimes,
     season_year,
     show_current_forecast,
     valid_months,
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
-    dataset = "forecast" if show_current_forecast else "reanalysis"
+    def get_season_dates(valid_months, season_year):
+        cur_year = season_year
+        dates = []
+        for i, month in enumerate(valid_months):
+            if i > 0 and month < valid_months[i - 1]:
+                cur_year += 1
+            dates.append(f"{cur_year}-{month:02d}-01")
+        return dates
 
-    if dataset == "forecast":
+    if show_current_forecast:
         clim_dates = [
             f"{year}-{issued_month:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
         ]
         cur_dates = [f"{issued_year}-{issued_month:02d}-01"]
+        da_clim = get_cogs(clim_dates, gdf, "forecast")
+        da_cur = get_cogs(cur_dates, gdf, "forecast")
+        da_clim_processed = seas5.aggregate_seas5_cogs_yearly(da_clim, leadtimes)
+        da_cur_processed = seas5.aggregate_seas5_cogs_yearly(da_cur, leadtimes)
     else:
-        clim_dates = [
-            f"{year}-{month:02d}-01"
-            for year in range(CLIM_START, CLIM_END + 1)
-            for month in valid_months
-        ]
-        # TODO - Does not handle year crossing
-        cur_dates = [f"{season_year}-{month:02d}-01" for month in valid_months]
+        clim_dates = []
+        for year in range(CLIM_START, CLIM_END + 1):
+            clim_dates.extend(get_season_dates(valid_months, year))
+        cur_dates = get_season_dates(valid_months, season_year)
+        da_clim = get_cogs(clim_dates, gdf, "reanalysis")
+        da_cur = get_cogs(cur_dates, gdf, "reanalysis")
+        da_clim_processed = era5.aggregate_seas5_cogs_yearly(da_clim)
+        da_cur_processed = era5.aggregate_seas5_cogs_yearly(da_cur)
 
-    da_clim = get_cogs(clim_dates, gdf, dataset)
-    da_cur = get_cogs(cur_dates, gdf, dataset)
-
-    da_clim_processed, da_cur_processed = precip.process_cogs(
-        da_clim=da_clim,
-        da_cur=da_cur,
-        months=valid_months,
-        issued_month=issued_month,
-        season_year=season_year,
-    )
     da_anom = da_cur_processed - da_clim_processed
 
     _gdf_sel = gdf[gdf.pcode.notna()]
     anom_plot = plot.plot_anomaly(da_anom, _gdf_sel)
     clim_plot = plot.plot_climatology(da_clim_processed, _gdf_sel)
-    return anom_plot, clim_dates, clim_plot
-
-
-@app.cell
-def _(clim_dates):
-    clim_dates
-    return
+    return anom_plot, clim_plot
 
 
 @app.cell
@@ -624,6 +625,7 @@ def _(
 
 @app.cell
 def _(
+    data_type_radio,
     df_pcode,
     hazard,
     high_tercile_selector,
@@ -641,12 +643,15 @@ def _(
     show_low_tercile = low_tercile_selector.value
     issued_mo_str = calendar.month_abbr[issued_month]
 
+    x_col = "mean_detrended_seas5" if data_type_radio.value == "detrended" else "mean_seas5"
+    y_col = "mean_detrended_era5" if data_type_radio.value == "detrended" else "mean_era5"
+
     title = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
 
     CERF_ISO3S = ["SSD", "ETH"]
 
     if hazard == "Flood":
-        sizecol = "Total Affected"
+        sizecol = impact_col
         if iso3 in CERF_ISO3S:
             colorcol = "allocation"
         else:
@@ -656,8 +661,8 @@ def _(
 
     _fig, _ax = plot.plot_comparison(
         df_pcode,
-        xcol="mean_detrended_seas5",
-        ycol="mean_detrended_era5",
+        xcol=x_col,
+        ycol=y_col,
         sizecol=sizecol,
         colorcol=colorcol,
         title=title,
@@ -668,22 +673,22 @@ def _(
     )
 
     _fig
-    return (min_year,)
+    return min_year, x_col, y_col
 
 
 @app.cell
-def _(df_pcode, min_year, show_current_forecast):
+def _(df_pcode, min_year, show_current_forecast, x_col, y_col):
     if min_year is not None:
         _df_ref = df_pcode[df_pcode["year"] >= min_year]
     else:
         _df_ref = df_pcode
 
-    _df_ref = _df_ref.dropna(subset=["mean_detrended_seas5", "mean_detrended_era5"])
+    _df_ref = _df_ref.dropna(subset=[x_col, y_col])
 
     metrics = {}
     metrics.update(
         {
-            "corr": _df_ref[["mean_detrended_seas5", "mean_detrended_era5"]]
+            "corr": _df_ref[[x_col, y_col]]
             .corr()
             .iloc[0, 1]
         }
@@ -692,14 +697,14 @@ def _(df_pcode, min_year, show_current_forecast):
     for _tercile in ["upper", "lower"]:
         q = 2 / 3 if _tercile == "upper" else 1 / 3
         seas5_thresh, era5_thresh = _df_ref[
-            ["mean_detrended_seas5", "mean_detrended_era5"]
+            [x_col, y_col]
         ].quantile(q)
         if _tercile == "upper":
-            pp = _df_ref["mean_detrended_seas5"] > seas5_thresh
-            p = _df_ref["mean_detrended_era5"] > era5_thresh
+            pp = _df_ref[x_col] > seas5_thresh
+            p = _df_ref[y_col] > era5_thresh
         else:
-            pp = _df_ref["mean_detrended_seas5"] < seas5_thresh
-            p = _df_ref["mean_detrended_era5"] < era5_thresh
+            pp = _df_ref[x_col] < seas5_thresh
+            p = _df_ref[y_col] < era5_thresh
         tp = pp & p
         tpr = tp.sum() / p.sum()
         metrics.update({f"{_tercile}_tpr": tpr})
@@ -710,19 +715,19 @@ def _(df_pcode, min_year, show_current_forecast):
         _df_rp_calc = _df_ref.copy()
         forecast_year = df_pcode["year"].max()
         current_val = df_pcode.set_index("year").loc[forecast_year][
-            "mean_detrended_seas5"
+            x_col
         ]
         for _tercile in ["upper", "lower"]:
             _df_rp_calc = rp_calc.calculate_one_group_rp(
                 _df_rp_calc,
-                col_name="mean_detrended_seas5",
+                col_name=x_col,
                 ascending=_tercile == "lower",
             )
-            _df_rp_calc = _df_rp_calc.sort_values("mean_detrended_seas5")
+            _df_rp_calc = _df_rp_calc.sort_values(x_col)
             _rp = np.interp(
                 current_val,
-                _df_rp_calc["mean_detrended_seas5"],
-                _df_rp_calc["mean_detrended_seas5_rp"],
+                _df_rp_calc[x_col],
+                _df_rp_calc[f"{x_col}_rp"],
             )
             rps.update({_tercile: _rp})
     return metrics, rps
