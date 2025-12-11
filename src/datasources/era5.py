@@ -23,42 +23,42 @@ def get_season_stats(iso3, adm_level, valid_months, stage="prod"):
     return df
 
 
-def total_seasonal_precip(df):
-    _df = df.copy()
-    # TODO: Handle Dec - Jan crossing
-    _df["season"] = _df["valid_date"].dt.year
-    _df["sum_month"] = _df["sum"] * _df["valid_date"].dt.days_in_month
-    _df2 = (
-        _df.groupby(["pcode", "season"])
-        .agg({"sum_month": lambda x: x.sum()})
-        .reset_index()
-    )
-    _df2 = _df2.rename(columns={"sum_month": "sum_season"})
-    return _df2
+# def total_seasonal_precip(df):
+#     _df = df.copy()
+#     # TODO: Handle Dec - Jan crossing
+#     _df["season"] = _df["valid_date"].dt.year
+#     _df["sum_month"] = _df["sum"] * _df["valid_date"].dt.days_in_month
+#     _df2 = (
+#         _df.groupby(["pcode", "season"])
+#         .agg({"sum_month": lambda x: x.sum()})
+#         .reset_index()
+#     )
+#     _df2 = _df2.rename(columns={"sum_month": "sum_season"})
+#     return _df2
 
 
-def load_era5(
-    pcode: str,
-    valid_months: List[int] = None,
-):
-    if valid_months is None:
-        valid_months = range(1, 13)
+# def load_era5(
+#     pcode: str,
+#     valid_months: List[int] = None,
+# ):
+#     if valid_months is None:
+#         valid_months = range(1, 13)
 
-    query = """
-    SELECT *
-    FROM public.era5
-    WHERE pcode = %s
-      AND EXTRACT(MONTH FROM valid_date) IN %s
-    """
-    engine = stratus.get_engine("prod")
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            query,
-            conn,
-            params=(pcode, tuple(valid_months)),
-            parse_dates=["valid_date"],
-        )
-    return df
+#     query = """
+#     SELECT *
+#     FROM public.era5
+#     WHERE pcode = %s
+#       AND EXTRACT(MONTH FROM valid_date) IN %s
+#     """
+#     engine = stratus.get_engine("prod")
+#     with engine.connect() as conn:
+#         df = pd.read_sql(
+#             query,
+#             conn,
+#             params=(pcode, tuple(valid_months)),
+#             parse_dates=["valid_date"],
+#         )
+#     return df
 
 
 def aggregate_era5_yearly(

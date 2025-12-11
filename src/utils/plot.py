@@ -120,7 +120,10 @@ def plot_map(gdf, adm_level, variable, val_col):
 
 
 def plot_annual_scatter(
-    df_annual_summary, highlight_year, val_col, df_cerf_annual=None,
+    df_annual_summary,
+    highlight_year,
+    val_col,
+    df_cerf_annual=None,
 ):
 
     _df = df_annual_summary.copy()
