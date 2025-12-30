@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.16.2"
+__generated_with = "0.15.2"
 app = marimo.App()
 
 with app.setup:
@@ -29,13 +29,16 @@ def _():
         source = "seas5" if dataset == "forecast" else "era5"
         return stratus.stack_cogs(dataset=source, dates=dates, clip_gdf=gdf)
 
+
     @mo.cache
     def load_codab_from_blob(iso3, adm_level):
         return stratus.codab.load_codab_from_blob(iso3, adm_level)
 
+
     @mo.cache
     def get_pop(iso3, adm_level):
         return hapi.get_pop(iso3, adm_level)
+
 
     @mo.cache
     def get_adm0_options():
@@ -59,19 +62,31 @@ def _():
 def _():
     # Merge in the population and identify cases where people are in the lower tercile
     def lower_tercile_pop(df, df_pop, adm_level):
-        _df = df.merge(
-            df_pop[["population", f"admin{adm_level}_code", f"admin{adm_level}_name"]],
-            left_on="pcode",
-            right_on=f"admin{adm_level}_code",
-        )
+        if (len(df_pop) == 1) and (adm_level == 0):
+            _df = df.merge(df_pop, how="cross")
+        else:
+            _df = df.merge(
+                df_pop[
+                    [
+                        "population",
+                        f"admin{adm_level}_code",
+                        f"admin{adm_level}_name",
+                    ]
+                ],
+                left_on="pcode",
+                right_on=f"admin{adm_level}_code",
+            )
         _df["pop_lower_tercile"] = _df.apply(
             lambda x: x["population"] if x["meets_threshold"] else 0, axis=1
         )
         return _df
 
+
     # Summarize total exposed population annually and calculate return periods
     def summarize_annually(df, season_year, val_col):
-        _df = df.groupby("year")[[val_col, "pop_lower_tercile"]].sum().reset_index()
+        _df = (
+            df.groupby("year")[[val_col, "pop_lower_tercile"]].sum().reset_index()
+        )
         df_annual_sum_precip = rp_calc.calculate_one_group_rp(
             _df, "pop_lower_tercile", ascending=False
         )
@@ -106,7 +121,10 @@ def _():
 @app.cell
 def _(get_adm0_options):
     adm0_dropdown = mo.ui.dropdown(
-        options=get_adm0_options(), label="Country", value="Ethiopia", searchable=True
+        options=get_adm0_options(),
+        label="Country",
+        value="Ethiopia",
+        searchable=True,
     )
     adm_level_dropdown_sk = mo.ui.dropdown(
         options=[0, 1, 2], label="Admin level", value=1
@@ -144,7 +162,9 @@ def _(adm0_dropdown, adm_level_dropdown_sk):
 
 @app.cell
 def _():
-    issued_month_dropdown_options, latest_issued_date = seas5.calculate_issued_months()
+    issued_month_dropdown_options, latest_issued_date = (
+        seas5.calculate_issued_months()
+    )
 
     issued_month_dropdown = mo.ui.dropdown(
         options=issued_month_dropdown_options,
@@ -188,7 +208,9 @@ def _():
         inline=True, options=["detrended", "original data"], value="detrended"
     )
 
-    mo.hstack([mo.md("**Data processing options:**"), data_type_radio], justify="start")
+    mo.hstack(
+        [mo.md("**Data processing options:**"), data_type_radio], justify="start"
+    )
     return (data_type_radio,)
 
 
@@ -201,13 +223,14 @@ def _(
 ):
     issued_month = issued_month_dropdown.value
     disaster_type = disaster_type_dropdown.value
-    val_col = "mean" if data_type_radio.value == "original data" else "mean_detrended"
+    val_col = (
+        "mean" if data_type_radio.value == "original data" else "mean_detrended"
+    )
 
-    leadtimes = list(range(valid_months_slider.value[0], valid_months_slider.value[1] + 1))
-    valid_months = [
-        (issued_month + x - 1) % 12 + 1
-        for x in leadtimes
-    ]
+    leadtimes = list(
+        range(valid_months_slider.value[0], valid_months_slider.value[1] + 1)
+    )
+    valid_months = [(issued_month + x - 1) % 12 + 1 for x in leadtimes]
 
     if len(valid_months) < 3:
         valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
@@ -258,8 +281,18 @@ def _(
     )
 
     # --- 1. Get raw data from database
-    df_forecast = seas5.get_season_stats(iso3, adm_level, issued_month, valid_months)
+    df_forecast = seas5.get_season_stats(
+        iso3, adm_level, issued_month, valid_months
+    )
     df_reanalysis = era5.get_season_stats(iso3, adm_level, valid_months)
+
+    mo.stop(
+        len(df_forecast) == 0 or len(df_reanalysis) == 0,
+        mo.md(
+            "No forecast or reanalysis data returned. Check that your selected admin level has data available."
+        ),
+    )
+
 
     # --- 2. Aggregate to yearly summary (avg mm/day/year/pcode)
     df_forecast_yearly = seas5.aggregate_seas5_yearly(
@@ -276,6 +309,8 @@ def _(
     _df_pop = get_pop(iso3, adm_level)
     _df = rp_calc.classify_groups_quantile(_df, q=0.33, column=val_col)
     _df = rp_calc.calculate_groups_rp(_df, "pcode", val_col)
+    df_pop = _df_pop
+    df = _df
     df_summary = lower_tercile_pop(_df, _df_pop, adm_level)
 
     # --- 4. Aggregate to national exposure and return periods
@@ -319,10 +354,12 @@ def _():
 
 @app.cell
 def _(df_annual, season_year, valid_mo_str):
-    rp = df_annual.loc[df_annual["year"] == season_year]["pop_lower_tercile_rp"].values[
-        0
-    ]
-    pop = df_annual.loc[df_annual["year"] == season_year]["pop_lower_tercile"].values[0]
+    rp = df_annual.loc[df_annual["year"] == season_year][
+        "pop_lower_tercile_rp"
+    ].values[0]
+    pop = df_annual.loc[df_annual["year"] == season_year][
+        "pop_lower_tercile"
+    ].values[0]
 
     mo.md(
         f"**{pop:,}** people are forecasted to experience below average (lower tercile) rainfall during the {valid_mo_str} season. We see this level of people in need once every **{rp:.2f}** years. See the plot below to understand how this level of impact compares with previous years. Interpretation of absolute values of seasonal precipitation should be done with caution as forecast and reanalysis products can be subject to significant bias. These precipitation values should instead be interpreted in relative terms."
@@ -350,7 +387,9 @@ def _():
 
 @app.cell
 def _():
-    mo.md(r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions.""")
+    mo.md(
+        r"""The plot below shows the return periods of total seasonal rainfall per admin level. Admin regions experiencing lower tercile rainfall are highlighted. The total number of people impacted in the section above is the sum of the total population in these highlighted regions."""
+    )
     return
 
 
@@ -457,6 +496,7 @@ def _(
 ):
     mo.stop(not anomaly_switch.value, mo.md(""))
 
+
     def get_season_dates(valid_months, season_year):
         cur_year = season_year
         dates = []
@@ -466,9 +506,11 @@ def _(
             dates.append(f"{cur_year}-{month:02d}-01")
         return dates
 
+
     if show_current_forecast:
         clim_dates = [
-            f"{year}-{issued_month:02d}-01" for year in range(CLIM_START, CLIM_END + 1)
+            f"{year}-{issued_month:02d}-01"
+            for year in range(CLIM_START, CLIM_END + 1)
         ]
         cur_dates = [f"{issued_year}-{issued_month:02d}-01"]
         da_clim = get_cogs(clim_dates, gdf, "forecast")
@@ -482,8 +524,8 @@ def _(
         cur_dates = get_season_dates(valid_months, season_year)
         da_clim = get_cogs(clim_dates, gdf, "reanalysis")
         da_cur = get_cogs(cur_dates, gdf, "reanalysis")
-        da_clim_processed = era5.aggregate_seas5_cogs_yearly(da_clim)
-        da_cur_processed = era5.aggregate_seas5_cogs_yearly(da_cur)
+        da_clim_processed = era5.aggregate_era5_cogs_yearly(da_clim)
+        da_cur_processed = era5.aggregate_era5_cogs_yearly(da_cur)
 
     da_anom = da_cur_processed - da_clim_processed
 
@@ -519,7 +561,9 @@ def _():
     mo.hstack(
         [
             mo.md("Show tercile boundaries:"),
-            mo.hstack([high_tercile_selector, low_tercile_selector], justify="start"),
+            mo.hstack(
+                [high_tercile_selector, low_tercile_selector], justify="start"
+            ),
         ],
         align="center",
     )
@@ -586,7 +630,9 @@ def _():
 @app.cell
 def _(min_year):
     min_year_note = (
-        "_note that impact data before 2000 is not shown_" if min_year < 2000 else ""
+        "_note that impact data before 2000 is not shown_"
+        if min_year < 2000
+        else ""
     )
     return
 
@@ -643,8 +689,16 @@ def _(
     show_low_tercile = low_tercile_selector.value
     issued_mo_str = calendar.month_abbr[issued_month]
 
-    x_col = "mean_detrended_seas5" if data_type_radio.value == "detrended" else "mean_seas5"
-    y_col = "mean_detrended_era5" if data_type_radio.value == "detrended" else "mean_era5"
+    x_col = (
+        "mean_detrended_seas5"
+        if data_type_radio.value == "detrended"
+        else "mean_seas5"
+    )
+    y_col = (
+        "mean_detrended_era5"
+        if data_type_radio.value == "detrended"
+        else "mean_era5"
+    )
 
     title = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
 
@@ -686,19 +740,11 @@ def _(df_pcode, min_year, show_current_forecast, x_col, y_col):
     _df_ref = _df_ref.dropna(subset=[x_col, y_col])
 
     metrics = {}
-    metrics.update(
-        {
-            "corr": _df_ref[[x_col, y_col]]
-            .corr()
-            .iloc[0, 1]
-        }
-    )
+    metrics.update({"corr": _df_ref[[x_col, y_col]].corr().iloc[0, 1]})
 
     for _tercile in ["upper", "lower"]:
         q = 2 / 3 if _tercile == "upper" else 1 / 3
-        seas5_thresh, era5_thresh = _df_ref[
-            [x_col, y_col]
-        ].quantile(q)
+        seas5_thresh, era5_thresh = _df_ref[[x_col, y_col]].quantile(q)
         if _tercile == "upper":
             pp = _df_ref[x_col] > seas5_thresh
             p = _df_ref[y_col] > era5_thresh
@@ -714,9 +760,7 @@ def _(df_pcode, min_year, show_current_forecast, x_col, y_col):
     if show_current_forecast:
         _df_rp_calc = _df_ref.copy()
         forecast_year = df_pcode["year"].max()
-        current_val = df_pcode.set_index("year").loc[forecast_year][
-            x_col
-        ]
+        current_val = df_pcode.set_index("year").loc[forecast_year][x_col]
         for _tercile in ["upper", "lower"]:
             _df_rp_calc = rp_calc.calculate_one_group_rp(
                 _df_rp_calc,

@@ -170,7 +170,7 @@ def plot_annual_scatter(
         )
     )
 
-    years_to_label = [highlight_year]
+    years_to_label = [highlight_year, 2020, 2021, 2022, 2023, 2024]
     if df_cerf_annual is not None:
         years_to_label.extend(_df[_df["has_cerf"]]["year"].tolist())
 
@@ -347,7 +347,7 @@ def plot_comparison(
         "mean_detrended_era5": "Observed mean daily rainfall (mm) [ERA5]",
     }
 
-    _fig, _ax = plt.subplots(dpi=200, figsize=(4, 4))
+    _fig, _ax = plt.subplots(dpi=200, figsize=(7, 7))
     if min_year is not None:
         df = df[df["year"] >= min_year]
     df = df.copy()
