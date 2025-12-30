@@ -1,13 +1,15 @@
 import numpy as np
 import pandas as pd
 
+from src.constants import CLIM_END, CLIM_START
+
 
 def detrend_column(
     df: pd.DataFrame,
     col: str,
     index_col: str = "valid_date",
-    min_index=None,
-    max_index=None,
+    min_index=CLIM_START,
+    max_index=CLIM_END,
 ) -> pd.DataFrame:
     """
     Detrend a column in a DataFrame using linear regression (via NumPy).
@@ -26,10 +28,6 @@ def detrend_column(
     pd.DataFrame
         Copy of the input DataFrame with a new column: <col>_detrended
     """
-    if min_index is None:
-        min_index = df[index_col].min()
-    if max_index is None:
-        max_index = df[index_col].max()
 
     df_sorted = df.sort_values(index_col).copy()
     df_model = df_sorted[

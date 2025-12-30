@@ -1,6 +1,7 @@
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
 TOMATO = "#f2645a"
 SAPPHIRE = "#007ce0"
@@ -10,11 +11,11 @@ LIGHT_GRAY = "#eeeeee"
 DARK_GRAY = "#888888"
 
 
-def plot_map(gdf, adm_level, variable):
+def plot_map(gdf, adm_level, variable, val_col):
     if variable == "population":
         color_scale = "Blues"
         color_range = [gdf.population.min(), gdf.population.max()]
-    elif variable == "sum_season_rp":
+    else:
         color_scale = "Reds"
         color_range = [1, 50]  # Because we have 45 seasons
     fig = px.choropleth_map(
@@ -31,10 +32,10 @@ def plot_map(gdf, adm_level, variable):
         },
         zoom=4.5,
         opacity=0.9,
-        labels={"sum_season_rp": "Return Period<br>(years)"},
+        labels={f"{val_col}_rp": "Return Period<br>(years)"},
         custom_data=[
             f"ADM{adm_level}_EN",
-            "sum_season_rp",
+            f"{val_col}_rp",
             "meets_threshold",
             "population",
         ],
@@ -77,7 +78,7 @@ def plot_map(gdf, adm_level, variable):
                 first = False
 
         # Add grey choropleth for null values
-    null_data = gdf[gdf["sum_season_rp"].isna()]
+    null_data = gdf[gdf[f"{val_col}_rp"].isna()]
 
     if not null_data.empty:
         fig.add_trace(
@@ -121,16 +122,17 @@ def plot_map(gdf, adm_level, variable):
 def plot_annual_scatter(
     df_annual_summary,
     highlight_year,
+    val_col,
     df_cerf_annual=None,
 ):
 
     _df = df_annual_summary.copy()
-    _df = _df[_df.season >= 2000]
+    _df = _df[_df.year >= 2000]
 
     if df_cerf_annual is not None:
         _df = _df.merge(
-            df_cerf_annual.rename(columns={"SEASON_YEAR": "season"}),
-            on="season",
+            df_cerf_annual.rename(columns={"SEASON_YEAR": "year"}),
+            on="year",
             how="left",
         )
         _df["has_cerf"] = ~_df["Approved amount in US$"].isna()
@@ -145,7 +147,7 @@ def plot_annual_scatter(
     def get_color(row):
         if row["has_cerf"]:
             return SAPPHIRE_LIGHT
-        elif row["season"] == highlight_year:
+        elif row["year"] == highlight_year:
             return TOMATO
         else:
             return SAPPHIRE
@@ -158,28 +160,28 @@ def plot_annual_scatter(
     # Add all points
     fig.add_trace(
         go.Scatter(
-            x=_df["sum_season"],
+            x=_df[val_col],
             y=_df["pop_lower_tercile"],
             mode="markers",
             marker=dict(color=_df["point_color"], size=_df["marker_size"]),  # Add size
             showlegend=False,
             hovertemplate="Year: %{text}<br>Rainfall: %{x:,.0f} mm<br>Population affected: %{y:,.0f}<extra></extra>",
-            text=_df["season"],
+            text=_df["year"],
         )
     )
 
-    years_to_label = [highlight_year]
+    years_to_label = [highlight_year, 2020, 2021, 2022, 2023, 2024]
     if df_cerf_annual is not None:
-        years_to_label.extend(_df[_df["has_cerf"]]["season"].tolist())
+        years_to_label.extend(_df[_df["has_cerf"]]["year"].tolist())
 
-    df_labeled = _df[_df["season"].isin(years_to_label)]
+    df_labeled = _df[_df["year"].isin(years_to_label)]
 
     # Create text with bold formatting for highlight year
     def get_label_text(row):
-        if row["season"] == highlight_year:
-            return f"<b>{row['season']}</b>"
+        if row["year"] == highlight_year:
+            return f"<b>{row['year']}</b>"
         else:
-            return str(row["season"])
+            return str(row["year"])
 
     df_labeled_text = df_labeled.apply(get_label_text, axis=1)
     df_labeled["y_offset"] = df_labeled["pop_lower_tercile"] + (
@@ -188,7 +190,7 @@ def plot_annual_scatter(
 
     fig.add_trace(
         go.Scatter(
-            x=df_labeled["sum_season"],
+            x=df_labeled[val_col],
             y=df_labeled["y_offset"],
             mode="text",
             text=df_labeled_text,
@@ -207,7 +209,7 @@ def plot_annual_scatter(
         title=f"<b>Total seasonal rainfall vs est. population impacted by drought</b><br><sub>From 2000 to {highlight_year}</sub>",
         margin=dict(l=0, r=0, t=50, b=0),
         xaxis=dict(
-            title="Total Rainfall (mm)",
+            title="Mean daily rainfall (mm)",
             showgrid=False,
         ),
         yaxis=dict(
@@ -262,7 +264,7 @@ def plot_anomaly(ds, gdf):
     )
     fig.update_coloraxes(
         colorbar=dict(
-            title="Rainfall anomaly<br>(mm)",
+            title="Rainfall anomaly<br>(avg mm/day)",
         )
     )
     fig.update_layout(
@@ -304,7 +306,7 @@ def plot_climatology(ds, gdf):
     )
     fig.update_coloraxes(
         colorbar=dict(
-            title="Seasonal rainfall<br>(mm)",
+            title="Seasonal rainfall<br>(avg mm/day)",
         )
     )
     fig.update_layout(
@@ -315,3 +317,220 @@ def plot_climatology(ds, gdf):
     )
 
     return fig
+
+
+def plot_comparison(
+    df,
+    xcol: str,
+    ycol: str,
+    colorcol: str = None,
+    sizecol: str = None,
+    rotation: int = 0,
+    min_year: int = None,
+    title: str = None,
+    show_high_tercile: bool = False,
+    show_low_tercile: bool = False,
+    show_current_forecast: bool = True,
+):
+
+    tercile_colors = {"upper": "royalblue", "lower": "chocolate"}
+    current_color = "mediumorchid"
+    cerf_color_mapping = {
+        "Yes": "crimson",
+        "No": "k",
+        "pre-CERF": "#595959",
+        np.nan: "k",
+    }
+
+    col_to_label = {
+        "mean_detrended_seas5": "Forecasted mean daily rainfall (mm) [SEAS5]",
+        "mean_detrended_era5": "Observed mean daily rainfall (mm) [ERA5]",
+    }
+
+    _fig, _ax = plt.subplots(dpi=200, figsize=(7, 7))
+    if min_year is not None:
+        df = df[df["year"] >= min_year]
+    df = df.copy()
+    xmax, ymax = df[[xcol, ycol]].max()
+    xmin, ymin = df[[xcol, ycol]].min()
+    padding = 0.1
+    xrange = xmax - xmin
+    yrange = ymax - ymin
+    xlim = (xmin - padding * xrange, xmax + padding * xrange)
+    ylim = (ymin - padding * yrange, ymax + padding * yrange)
+    if show_high_tercile and show_low_tercile:
+        tercile_alpha = 0.05
+    else:
+        tercile_alpha = 0.1
+
+    def show_tercile(level):
+        df_ref = df.dropna(subset=[xcol, ycol])
+        q = 2 / 3 if level == "upper" else 1 / 3
+        x_thresh, y_thresh = df_ref[[xcol, ycol]].quantile(q)
+        color = tercile_colors[level]
+        _ax.axvspan(
+            xmin=x_thresh if level == "upper" else xlim[0],
+            xmax=xlim[1] if level == "upper" else x_thresh,
+            facecolor=color,
+            alpha=tercile_alpha,
+            zorder=-2,
+        )
+        _ax.annotate(
+            f"  {level} tercile",
+            (x_thresh, ylim[0]),
+            color=color,
+            zorder=-1,
+            fontsize=8,
+            rotation=90,
+            fontstyle="italic",
+            alpha=0.5,
+            ha="left" if level == "upper" else "right",
+        )
+        _ax.axhspan(
+            ymin=y_thresh if level == "upper" else ylim[0],
+            ymax=ylim[1] if level == "upper" else y_thresh,
+            facecolor=color,
+            alpha=tercile_alpha,
+            zorder=-2,
+        )
+        _ax.annotate(
+            f"  {level} tercile",
+            (xlim[0], y_thresh),
+            color=color,
+            zorder=-1,
+            fontsize=8,
+            fontstyle="italic",
+            alpha=0.5,
+            va="bottom" if level == "upper" else "top",
+        )
+
+    if show_high_tercile:
+        show_tercile("upper")
+    if show_low_tercile:
+        show_tercile("lower")
+
+    max_bubble_size = 2000
+    if sizecol is None:
+        sizes = np.full(len(df), 0)
+        max_size_value = None
+    else:
+        sizes = df[sizecol].fillna(0) / df[sizecol].max() * max_bubble_size
+        max_size_value = df[sizecol].max()
+    if colorcol is None:
+        df["color"] = "k"
+    else:
+        df["color"] = df[colorcol].map(cerf_color_mapping)
+    _ax.scatter(
+        df[xcol],
+        df[ycol],
+        s=sizes,
+        c=df["color"],
+        alpha=0.3,
+        edgecolor="none",
+        zorder=2,
+    )
+    for year, row in df.set_index("year").iterrows():
+        _ax.annotate(
+            str(year),
+            (row[xcol], row[ycol]),
+            fontsize=8,
+            ha="center",
+            va="center",
+            color=row["color"],
+            rotation=rotation,
+            zorder=3,
+        )
+    # if show_current_forecast and "seas5" in xcol:
+    if show_current_forecast:
+        # if 2025 in df["year"].to_list():
+        forecast_year = df["year"].max()
+        current_val = df.set_index("year").loc[forecast_year][xcol]
+        _ax.axvline(current_val, color=current_color, linestyle="--", zorder=-1)
+        _ax.annotate(
+            f" {forecast_year} forecast",
+            (current_val, ylim[0]),
+            rotation=90,
+            va="bottom",
+            ha="right",
+            color=current_color,
+            zorder=-1,
+            fontstyle="italic",
+        )
+    _ax.set_xlabel(col_to_label.get(xcol, xcol))
+    _ax.set_ylabel(col_to_label.get(ycol, ycol))
+    if title is not None:
+        _ax.set_title(title)
+    _ax.spines["top"].set_visible(False)
+    _ax.spines["right"].set_visible(False)
+    _ax.set_xlim(xlim)
+    _ax.set_ylim(ylim)
+
+    if sizecol is not None or colorcol is not None:
+
+        def get_legend_y(row_num):
+            return ylim[1] - yrange * 0.04 - yrange * row_num * 0.03
+
+        legend_x = xlim[0] + xrange * 0.18
+
+        def plot_legend_box(xstart, xwidth):
+            rect = mpatches.Rectangle(
+                (xstart, get_legend_y(4.7)),
+                xwidth,
+                yrange * 0.16,
+                linewidth=0.5,
+                color="white",
+                zorder=0,
+                alpha=0.5,
+            )
+            _ax.add_patch(rect)
+
+    if colorcol is not None:
+        _ax.annotate(
+            "CERF allocation:",
+            (legend_x, get_legend_y(0)),
+            va="top",
+            fontstyle="italic",
+            fontsize=6,
+        )
+        for i, (label, color) in enumerate(cerf_color_mapping.items()):
+            if str(label) == "nan":
+                continue
+            _ax.annotate(
+                label,
+                (legend_x, get_legend_y(i + 1)),
+                va="top",
+                color=color,
+                fontsize=6,
+            )
+        plot_legend_box(legend_x, xrange * 0.16)
+    if sizecol is not None:
+        x_legend_bubble = legend_x - xrange * 0.08
+        y_legend_bubble = get_legend_y(2)
+        _ax.scatter(
+            [x_legend_bubble],
+            [y_legend_bubble],
+            s=[max_bubble_size],
+            facecolor="none",
+            edgecolor="k",
+            linewidth=0.5,
+        )
+        _ax.annotate(
+            f"{sizecol}:\n{max_size_value:,.0f}",
+            (x_legend_bubble, y_legend_bubble),
+            ha="center",
+            va="center",
+            fontstyle="italic",
+            fontsize=6,
+        )
+        plot_legend_box(legend_x - xrange * 0.16, xrange * 0.16)
+        # rect = mpatches.Rectangle(
+        #     (legend_x - xrange * 0.16, get_legend_y(4.7)),
+        #     xrange * 0.32,
+        #     yrange * 0.16,
+        #     linewidth=0.5,
+        #     color="white",
+        #     zorder=0,
+        #     alpha=0.5,
+        # )
+        # _ax.add_patch(rect)
+    return (_fig, _ax)
